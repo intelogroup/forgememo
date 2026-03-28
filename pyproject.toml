@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forgemem"
+version = "0.1.0"
+description = "Persistent memory for AI agents — cross-session context that actually sticks"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=0.28.0",
+    "fastmcp>=0.6.0",
+    "flask>=2.3.0",
+    "requests>=2.31.0",
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/kalinovdameus/forgemem"
+Documentation = "https://github.com/kalinovdameus/forgemem#readme"
+
+[project.scripts]
+forgemem = "forgemem.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]

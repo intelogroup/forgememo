@@ -1,0 +1,41 @@
+{
+  "forgemem_skill_version": 1,
+  "description": "Forgemem persistent memory tools for AI agents",
+  "tools": [
+    {
+      "name": "forgemem_store",
+      "description": "Save a memory trace to Forgemem. Use after fixing bugs, completing features, or noticing reusable lessons.",
+      "command": "forgemem store",
+      "parameters": {
+        "content": "What happened, what worked or failed, include file paths and error messages",
+        "type": "success|failure|plan|note",
+        "project": "repo name (auto-detected from git if omitted)",
+        "distill": "true to auto-extract a durable principle"
+      }
+    },
+    {
+      "name": "forgemem_search",
+      "description": "Search memory for past learnings, patterns, or failures.",
+      "command": "forgemem search",
+      "parameters": {
+        "query": "what to search for",
+        "project": "scope to a specific repo (optional)",
+        "k": "max results (default 5)"
+      }
+    },
+    {
+      "name": "forgemem_distill",
+      "description": "Distill raw traces into durable principles via Claude Haiku. Run at end of session.",
+      "command": "forgemem distill",
+      "parameters": {
+        "target": "session ID or 'all' (default: all)"
+      }
+    },
+    {
+      "name": "forgemem_mine",
+      "description": "Mine all ~/Developer repos for recent git commits and markdown changes, extracting learnings.",
+      "command": "forgemem mine",
+      "parameters": {}
+    }
+  ]
+}

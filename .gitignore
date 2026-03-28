@@ -1,0 +1,32 @@
+# Secrets
+.env
+.env.local
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Database & runtime state
+*.db
+*.db-shm
+*.db-wal
+md_scan_hashes.json
+*.log
+forgemem_daemon.log
+daily_scan.log
+
+# Tools
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.DS_Store
