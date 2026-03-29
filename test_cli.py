@@ -228,6 +228,7 @@ class TestStartMine:
             patch("shutil.which", return_value="/usr/local/bin/forgemem"),
             patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")),
             patch("forgemem.core.DB_PATH", tmp_path / "forgemem.db"),
+            patch("forgemem.config.load", return_value={"provider": "anthropic"}),
         ):
             result = runner.invoke(app, ["start", "--mine", "--mine-interval", "1800"])
 
@@ -255,6 +256,7 @@ class TestStartMine:
             patch("shutil.which", return_value="/usr/local/bin/forgemem"),
             patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")),
             patch("forgemem.core.DB_PATH", tmp_path / "forgemem.db"),
+            patch("forgemem.config.load", return_value={"provider": "anthropic"}),
         ):
             result = runner.invoke(app, ["start"])
 
@@ -277,6 +279,7 @@ class TestStartMine:
             patch("shutil.which", return_value="/usr/local/bin/forgemem"),
             patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")),
             patch("forgemem.core.DB_PATH", tmp_path / "forgemem.db"),
+            patch("forgemem.config.load", return_value={"provider": "anthropic"}),
         ):
             runner.invoke(app, ["start", "--mine"])
 
@@ -309,6 +312,7 @@ class TestStop:
             patch("forgemem.cli.MINER_PLIST_PATH", miner_plist),
             patch("subprocess.run", side_effect=fake_run),
             patch("typer.confirm", return_value=False),  # don't remove files
+            patch("forgemem.config.load", return_value={"provider": "anthropic"}),
         ):
             result = runner.invoke(app, ["stop"])
 
@@ -368,6 +372,35 @@ class TestStop:
         assert result.exit_code == 0, result.output
         assert not server_plist.exists(), "server plist should be removed"
         assert not miner_plist.exists(), "miner plist should be removed"
+
+
+# ---------------------------------------------------------------------------
+# Provider guard: init and start must exit(1) when no provider configured
+# ---------------------------------------------------------------------------
+
+class TestProviderGuard:
+    def test_init_exits_1_when_no_provider(self, tmp_path):
+        """forgemem init must exit with code 1 when no provider is configured (non-interactive)."""
+        from forgemem.core import INIT_SQL
+        with (
+            patch("forgemem.core.DB_PATH", tmp_path / "forgemem.db"),
+            patch("forgemem.cli._register_mcp", return_value=False),
+            patch("forgemem.cli._auto_detect_and_generate_skills", return_value=None),
+            patch("forgemem.config.detect_ollama", return_value=None),
+            patch("forgemem.config.load", return_value={}),
+            patch("forgemem.config.save", return_value=None),
+        ):
+            result = runner.invoke(app, ["init", "--yes"])
+        assert result.exit_code == 1, result.output
+        assert "ACTION REQUIRED" in result.output
+
+    @pytest.mark.skipif(sys.platform != "darwin", reason="LaunchAgent is macOS only")
+    def test_start_exits_1_when_no_provider(self):
+        """forgemem start must exit with code 1 when no provider is configured."""
+        with patch("forgemem.config.load", return_value={}):
+            result = runner.invoke(app, ["start"])
+        assert result.exit_code == 1, result.output
+        assert "ACTION REQUIRED" in result.output
 
 
 # ---------------------------------------------------------------------------

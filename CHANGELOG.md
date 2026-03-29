@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.9] — 2026-03-28
+
+- Fix: `forgemem init` and `forgemem start` now exit with code 1 when no inference provider is configured — agents that ignore warning panels can no longer silently proceed to start without a working provider
+- Fix: `forgemem init` auto-runs `forgemem start` on success (provider configured) — reduces setup from two commands to one; agents only need `forgemem init` to complete full initialization
+
 ## [0.1.8] — 2026-03-28
 
 - Fix: `forgemem init` non-interactive (agent/piped) runs now show a prominent red `ACTION REQUIRED` panel when no inference provider is configured, listing all five provider options — previously a single yellow line was easily missed

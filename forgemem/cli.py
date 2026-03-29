@@ -373,22 +373,19 @@ def init(
     if not provider_configured:
         console.print(Panel(
             "[bold green]Forgemem initialized successfully![/]\n\n"
-            "[bold red]⚠  REQUIRED BEFORE USE:[/]\n"
-            "  [cyan]forgemem config <provider> --key <key>[/]   ← do this first\n\n"
-            "[bold]Next steps:[/]\n"
-            "  1. [cyan]forgemem config anthropic --key sk-ant-...[/]  (or openai/gemini/ollama)\n"
-            "  2. [cyan]forgemem start[/]          — launch the MCP server (background daemon)\n"
-            "  3. Restart Claude Code / your AI agent to pick up the MCP connection\n"
-            "  4. [cyan]forgemem status[/]         — verify everything is running\n\n"
-            "[bold]Key commands:[/]\n"
-            "  [cyan]forgemem store \"<text>\"[/]   — save a memory manually\n"
-            "  [cyan]forgemem search \"<query>\"[/] — search stored memories\n"
-            "  [cyan]forgemem mine[/]              — scan recent work and extract memories\n"
-            "  [cyan]forgemem distill[/]           — condense traces into lasting principles\n\n"
-            "Run [cyan]forgemem help[/] at any time to see this again.",
-            title="Forgemem Ready",
+            "[bold red]⚠  REQUIRED BEFORE USE — configure a provider now:[/]\n"
+            "  [cyan]forgemem config anthropic --key sk-ant-...[/]\n"
+            "  [cyan]forgemem config openai    --key sk-...[/]\n"
+            "  [cyan]forgemem config gemini    --key AIza...[/]\n"
+            "  [cyan]forgemem config ollama[/]               [dim](local, free)[/]\n"
+            "  [cyan]forgemem config forgemem[/]             [dim](managed, no key needed)[/]\n\n"
+            "After configuring a provider, run:\n"
+            "  [cyan]forgemem start[/]  →  restart your agent  →  [cyan]forgemem status[/]",
+            title="[bold red]ACTION REQUIRED — provider not set[/]",
+            border_style="red",
             expand=False,
         ))
+        raise typer.Exit(code=1)
     else:
         console.print(Panel(
             "[bold green]Forgemem initialized successfully![/]\n\n"
@@ -406,18 +403,16 @@ def init(
             title="Forgemem Ready",
             expand=False,
         ))
+        console.print("\n[dim]Auto-starting MCP server…[/]")
+        _do_start()
 
 
-@app.command()
-def start(
-    schedule: Annotated[
-        Optional[str],
-        typer.Option(help="login|hourly|manual"),
-    ] = None,
-    mine: Annotated[bool, typer.Option("--mine/--no-mine", help="Also install a mining LaunchAgent (macOS only).")] = False,
-    mine_interval: Annotated[int, typer.Option(help="Mining interval in seconds (default: 3600).")] = 3600,
-):
-    """Start the MCP server. On macOS: installs a LaunchAgent plist."""
+def _do_start(
+    schedule: Optional[str] = None,
+    mine: bool = False,
+    mine_interval: int = 3600,
+) -> None:
+    """Core start logic — install and load LaunchAgent(s). Called by start() and init()."""
     if sys.platform == "linux":
         forgemem_bin = shutil.which("forgemem") or "forgemem"
         console.print("[bold]Linux detected.[/] To run forgemem as a systemd user service, create:")
@@ -527,6 +522,34 @@ def start(
             console.print(f"[green]mining agent loaded[/] (interval: {mine_interval}s)")
         else:
             console.print(f"[yellow]launchctl load (miner) returned {miner_result.returncode}:[/] {miner_result.stderr.strip()}")
+
+
+@app.command()
+def start(
+    schedule: Annotated[
+        Optional[str],
+        typer.Option(help="login|hourly|manual"),
+    ] = None,
+    mine: Annotated[bool, typer.Option("--mine/--no-mine", help="Also install a mining LaunchAgent (macOS only).")] = False,
+    mine_interval: Annotated[int, typer.Option(help="Mining interval in seconds (default: 3600).")] = 3600,
+):
+    """Start the MCP server. On macOS: installs a LaunchAgent plist."""
+    from forgemem import config as fm_cfg
+    if fm_cfg.load().get("provider") is None:
+        console.print(Panel(
+            "[bold red]No inference provider configured.[/]\n\n"
+            "Run one of these first, then retry [cyan]forgemem start[/]:\n"
+            "  [cyan]forgemem config anthropic --key sk-ant-...[/]\n"
+            "  [cyan]forgemem config openai    --key sk-...[/]\n"
+            "  [cyan]forgemem config gemini    --key AIza...[/]\n"
+            "  [cyan]forgemem config ollama[/]               [dim](local, free)[/]\n"
+            "  [cyan]forgemem config forgemem[/]             [dim](managed, no key needed)[/]",
+            title="[bold red]ACTION REQUIRED — configure provider first[/]",
+            border_style="red",
+            expand=False,
+        ))
+        raise typer.Exit(code=1)
+    _do_start(schedule=schedule, mine=mine, mine_interval=mine_interval)
 
 
 @app.command()
