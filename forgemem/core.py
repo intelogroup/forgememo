@@ -28,7 +28,7 @@ try:
 except ImportError:
     pass
 
-DB_PATH = Path(os.environ.get("FORGEMEM_DB", Path.home() / "Developer" / "Forgemem" / "forgemem_memory.db"))
+DB_PATH = Path(os.environ.get("FORGEMEM_DB", Path.home() / ".forgemem" / "forgemem_memory.db"))
 
 VALID_TYPES = ("success", "failure", "plan", "note")
 
@@ -71,6 +71,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS principles_fts
 
 
 def get_conn() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -114,32 +115,15 @@ def insert_principle(conn, source_trace_id, project_tag, trace_type, principle, 
 
 
 def distill_via_api(content: str, trace_type: str) -> dict:
-    """Call Claude Haiku to extract a principle. Requires ANTHROPIC_API_KEY."""
-    try:
-        import anthropic
-    except ImportError:
-        print("ERROR: pip install anthropic required for --distill", file=sys.stderr)
-        sys.exit(1)
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        print("ERROR: ANTHROPIC_API_KEY not set. Cannot auto-distill.", file=sys.stderr)
-        sys.exit(1)
-
-    client = anthropic.Anthropic(api_key=api_key)
+    """Extract a principle from a trace using the configured AI provider."""
+    from forgemem import inference
     prompt = (
         f'Extract a single 1-2 sentence principle from this {trace_type} trace. '
         f'Be concrete and actionable. '
         f'Return JSON only, no markdown: {{"principle": "...", "impact_score": 5, "tags": ["..."]}}\n\n'
         f'Trace:\n{content[:2000]}'
     )
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=300,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = response.content[0].text.strip()
-    # Strip markdown code fences if present
+    raw = inference.call(prompt, max_tokens=300)
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -147,13 +131,10 @@ def distill_via_api(content: str, trace_type: str) -> dict:
     try:
         return json.loads(raw.strip())
     except json.JSONDecodeError as e:
-        raise ValueError(f"Haiku returned non-JSON (len={len(raw)}): {raw[:200]}") from e
+        raise ValueError(f"Provider returned non-JSON (len={len(raw)}): {raw[:200]}") from e
 
 
 def cmd_save(args):
-    if args.distill and not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ERROR: ANTHROPIC_API_KEY not set. Remove --distill or set the key.", file=sys.stderr)
-        sys.exit(1)
     conn = get_conn()
     project = args.project or detect_project()
     tags_str = ",".join(t.strip() for t in args.tags.split(",")) if args.tags else None
@@ -296,9 +277,6 @@ _DISTILL_QUERIES = {
 
 
 def cmd_distill(args):
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ERROR: ANTHROPIC_API_KEY not set. Cannot distill.", file=sys.stderr)
-        sys.exit(1)
     conn = get_conn()
     has_session = bool(args.session)
     has_project = bool(args.project)
@@ -368,19 +346,8 @@ def cmd_stats(args):
 
 
 def mine_memories_via_api(md_content: str, filename: str) -> list[dict]:
-    """Ask Claude Haiku to extract traces from a memory .md file."""
-    try:
-        import anthropic
-    except ImportError:
-        print("ERROR: pip install anthropic required", file=sys.stderr)
-        sys.exit(1)
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        print("ERROR: ANTHROPIC_API_KEY not set.", file=sys.stderr)
-        sys.exit(1)
-
-    client = anthropic.Anthropic(api_key=api_key)
+    """Extract traces from a memory .md file using the configured AI provider."""
+    from forgemem import inference
     prompt = (
         "You are reading a project memory file. Extract ALL meaningful traces (successes, failures, notes, plans) "
         "that could be saved as long-term lessons. For each trace return a JSON object with keys: "
@@ -389,12 +356,7 @@ def mine_memories_via_api(md_content: str, filename: str) -> list[dict]:
         "Return a JSON array only, no markdown. If nothing useful, return [].\n\n"
         f"File: {filename}\n\n{md_content[:4000]}"
     )
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=1500,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = response.content[0].text.strip()
+    raw = inference.call(prompt, max_tokens=1500)
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -403,10 +365,6 @@ def mine_memories_via_api(md_content: str, filename: str) -> list[dict]:
 
 
 def cmd_mine_memories(args):
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ERROR: ANTHROPIC_API_KEY not set. Cannot mine.", file=sys.stderr)
-        sys.exit(1)
-
     memory_dir = Path(args.dir).expanduser()
     if not memory_dir.exists():
         print(f"ERROR: Directory not found: {memory_dir}", file=sys.stderr)
@@ -521,17 +479,14 @@ def cmd_capture(args):
 
     p_id = None
     if args.distill:
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            print("ERROR: ANTHROPIC_API_KEY not set. Trace saved without distillation.", file=sys.stderr)
-        else:
-            print("Distilling via Claude API...", file=sys.stderr)
-            result = distill_via_api(content, args.type)
-            principle = result.get("principle", "")
-            score = result.get("impact_score", 5)
-            tags = ",".join(result.get("tags", [])) or None
-            p_id = insert_principle(conn, trace_id, project, args.type, principle, score, tags)
-            conn.execute("UPDATE traces SET distilled=1 WHERE id=?", (trace_id,))
-            print(f"  Principle: {principle}", file=sys.stderr)
+        print("Distilling via configured provider...", file=sys.stderr)
+        result = distill_via_api(content, args.type)
+        principle = result.get("principle", "")
+        score = result.get("impact_score", 5)
+        tags = ",".join(result.get("tags", [])) or None
+        p_id = insert_principle(conn, trace_id, project, args.type, principle, score, tags)
+        conn.execute("UPDATE traces SET distilled=1 WHERE id=?", (trace_id,))
+        print(f"  Principle: {principle}", file=sys.stderr)
 
     conn.commit()
     conn.close()

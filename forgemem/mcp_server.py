@@ -14,11 +14,14 @@ Register in ~/.claude/settings.json:
 
 import os
 import sqlite3
+import subprocess
 import sys
-
+import threading
 from pathlib import Path
 
-DB_PATH = Path(os.environ.get("FORGEMEM_DB", Path.home() / "Developer" / "Forgemem" / "forgemem_memory.db"))
+from forgemem import config as _cfg
+
+DB_PATH = Path(os.environ.get("FORGEMEM_DB", Path.home() / ".forgemem" / "forgemem_memory.db"))
 
 try:
     from fastmcp import FastMCP
@@ -84,6 +87,24 @@ def _log_connection(transport: str, ip: str = None, agent: str = None):
 # Track stdio sessions — log once per process on first tool call
 _stdio_logged = False
 
+# Background sync — fires once per MCP process on first tool call
+_sync_triggered = False
+
+
+def _trigger_sync() -> None:
+    """Pull remote changes in the background if the user has a Forgemem token.
+    Non-blocking: fires a subprocess and returns immediately."""
+    if not _cfg.load().get("forgemem_token"):
+        return
+    try:
+        subprocess.Popen(
+            ["forgemem", "sync", "--pull-only"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
 
 @mcp.tool()
 def retrieve_memories(
@@ -102,10 +123,13 @@ def retrieve_memories(
         project: Filter to a specific project tag (optional)
         type: Filter to success|failure|plan|note (optional)
     """
-    global _stdio_logged
+    global _stdio_logged, _sync_triggered
     if not _stdio_logged:
         _stdio_logged = True
         _log_connection("stdio", agent="claude-code")
+    if not _sync_triggered:
+        _sync_triggered = True
+        threading.Thread(target=_trigger_sync, daemon=True).start()
 
     conn = _conn()
     if conn is None:
@@ -231,6 +255,171 @@ def save_trace(
         msg += f" + principle #{p_id}"
     else:
         msg += " — run `bm distill` to extract principles later"
+    return msg
+
+
+@mcp.tool()
+def mine_session(
+    memories: list,
+    project: str = None,
+    session: str = None,
+) -> str:
+    """
+    Batch-store memories extracted by the agent from the current session.
+    The agent (Claude Code / Gemini CLI) does the extraction inline — no API key needed.
+    Call this at session end with the memories you've identified.
+
+    Each memory in the list must be a dict with:
+        type:      success|failure|plan|note
+        content:   full trace text (what happened)
+        principle: 1-2 sentence distilled takeaway (optional but recommended)
+        score:     impact 0-10 (default 5, used only when principle is set)
+        tags:      comma-separated tags e.g. "auth,cors" (optional)
+
+    Example call:
+        mine_session(memories=[
+            {"type": "success", "content": "...", "principle": "...", "score": 8, "tags": "perf"},
+            {"type": "failure", "content": "...", "principle": "..."},
+        ], project="myapp")
+    """
+    conn = _conn()
+    if conn is None:
+        return "Forgemem DB not found. Run: forgemem init"
+
+    if not isinstance(memories, list) or not memories:
+        return "ERROR: memories must be a non-empty list of dicts"
+
+    saved, skipped = [], []
+    for i, m in enumerate(memories):
+        if not isinstance(m, dict):
+            skipped.append(f"#{i} not a dict")
+            continue
+        mtype = m.get("type", "note")
+        if mtype not in ("success", "failure", "plan", "note"):
+            mtype = "note"
+        content = str(m.get("content", "")).strip()
+        if not content:
+            skipped.append(f"#{i} empty content")
+            continue
+        principle = str(m.get("principle", "")).strip() or None
+        score = int(m.get("score", 5))
+        tags_raw = m.get("tags", "")
+        tags_str = ",".join(t.strip() for t in str(tags_raw).split(",") if t.strip()) or None
+
+        cur = conn.execute(
+            "INSERT INTO traces (session_id, project_tag, type, content) VALUES (?, ?, ?, ?)",
+            (session, project, mtype, content),
+        )
+        trace_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO traces_fts(rowid, content, project_tag, type) VALUES (?, ?, ?, ?)",
+            (trace_id, content, project or "", mtype),
+        )
+        p_id = None
+        if principle:
+            cur2 = conn.execute(
+                "INSERT INTO principles (source_trace_id, project_tag, type, principle, impact_score, tags) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (trace_id, project, mtype, principle, score, tags_str),
+            )
+            p_id = cur2.lastrowid
+            conn.execute(
+                "INSERT INTO principles_fts(rowid, principle, project_tag, tags) VALUES (?, ?, ?, ?)",
+                (p_id, principle, project or "", tags_str or ""),
+            )
+            conn.execute("UPDATE traces SET distilled=1 WHERE id=?", (trace_id,))
+        saved.append(f"trace#{trace_id}" + (f"+principle#{p_id}" if p_id else ""))
+
+    conn.commit()
+    conn.close()
+
+    msg = f"mine_session: saved {len(saved)} memories"
+    if project:
+        msg += f" → project={project}"
+    if saved:
+        msg += "\n  " + ", ".join(saved)
+    if skipped:
+        msg += f"\n  skipped: {', '.join(skipped)}"
+    return msg
+
+
+@mcp.tool()
+def distill_session(
+    distillations: list,
+    project: str = None,
+) -> str:
+    """
+    Write agent-computed principles for undistilled traces.
+    The agent fetches undistilled traces via retrieve_memories, synthesizes
+    principles inline, then calls this tool to persist them. No API key needed.
+
+    Each item in distillations must be a dict with:
+        trace_id:  int — ID of the undistilled trace
+        principle: str — 1-2 sentence distilled takeaway
+        score:     int — impact 0-10 (default 5)
+        tags:      str — comma-separated tags (optional)
+
+    Example:
+        distill_session(distillations=[
+            {"trace_id": 42, "principle": "Always validate X before Y.", "score": 8},
+        ])
+    """
+    conn = _conn()
+    if conn is None:
+        return "Forgemem DB not found. Run: forgemem init"
+
+    if not isinstance(distillations, list) or not distillations:
+        return "ERROR: distillations must be a non-empty list of dicts"
+
+    written, skipped = [], []
+    for i, d in enumerate(distillations):
+        if not isinstance(d, dict):
+            skipped.append(f"#{i} not a dict")
+            continue
+        trace_id = d.get("trace_id")
+        if not isinstance(trace_id, int):
+            skipped.append(f"#{i} trace_id must be int")
+            continue
+        principle = str(d.get("principle", "")).strip()
+        if not principle:
+            skipped.append(f"#{i} empty principle")
+            continue
+
+        # Verify trace exists and is undistilled
+        row = conn.execute(
+            "SELECT id, project_tag, type FROM traces WHERE id=? AND distilled=0",
+            (trace_id,)
+        ).fetchone()
+        if row is None:
+            skipped.append(f"#{i} trace_id={trace_id} not found or already distilled")
+            continue
+
+        score = int(d.get("score", 5))
+        tags_raw = d.get("tags", "")
+        tags_str = ",".join(t.strip() for t in str(tags_raw).split(",") if t.strip()) or None
+        proj = project or row["project_tag"]
+
+        cur = conn.execute(
+            "INSERT INTO principles (source_trace_id, project_tag, type, principle, impact_score, tags) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (trace_id, proj, row["type"], principle, score, tags_str),
+        )
+        p_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO principles_fts(rowid, principle, project_tag, tags) VALUES (?, ?, ?, ?)",
+            (p_id, principle, proj or "", tags_str or ""),
+        )
+        conn.execute("UPDATE traces SET distilled=1 WHERE id=?", (trace_id,))
+        written.append(f"trace#{trace_id}→principle#{p_id}")
+
+    conn.commit()
+    conn.close()
+
+    msg = f"distill_session: wrote {len(written)} principle(s)"
+    if written:
+        msg += "\n  " + ", ".join(written)
+    if skipped:
+        msg += f"\n  skipped: {', '.join(skipped)}"
     return msg
 
 

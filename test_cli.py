@@ -381,7 +381,6 @@ class TestStop:
 class TestProviderGuard:
     def test_init_exits_1_when_no_provider(self, tmp_path):
         """forgemem init must exit with code 1 when no provider is configured (non-interactive)."""
-        from forgemem.core import INIT_SQL
         with (
             patch("forgemem.core.DB_PATH", tmp_path / "forgemem.db"),
             patch("forgemem.cli._register_mcp", return_value=False),

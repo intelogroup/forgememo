@@ -14,13 +14,13 @@ import contextlib
 import fcntl
 import hashlib
 import json
-import os
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from forgemem import core
+from forgemem import core, inference
+from forgemem import config as cfg
 
 try:
     from dotenv import load_dotenv
@@ -125,31 +125,74 @@ def call_haiku_tool(client, prompt: str, max_tokens: int) -> list[dict]:
     return []
 
 
-def extract_learnings(project: str, git_log: str) -> list[dict]:
-    """Call Claude Haiku to extract learnings from git activity."""
+def _extract_via_inference(prompt: str) -> list[dict]:
+    """Extract learnings via inference.call() for non-Anthropic providers.
+    Uses a JSON-structured prompt since tool_use is Anthropic-specific."""
+    json_prompt = (
+        prompt +
+        '\n\nRespond with JSON only — no markdown fences, no extra text:\n'
+        '{"learnings": [{"type": "success|failure|plan|note", "content": "...", '
+        '"principle": "...", "impact_score": 5, "tags": ["..."]}]}'
+    )
     try:
-        import anthropic
-    except ImportError:
-        log("ERROR: pip install anthropic")
+        raw = inference.call(json_prompt, max_tokens=1000)
+    except SystemExit:
         return []
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        log("ERROR: ANTHROPIC_API_KEY not set")
+    # Strip markdown code fences if model wraps anyway
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+
+    try:
+        data = json.loads(raw)
+        items = data.get("learnings", [])
+        valid = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") not in ("success", "failure", "plan", "note"):
+                item["type"] = "note"
+            if not str(item.get("content", "")).strip():
+                continue
+            valid.append(item)
+        return valid
+    except (json.JSONDecodeError, AttributeError) as e:
+        log(f"  JSON parse error from inference response: {e}")
         return []
 
-    client = anthropic.Anthropic(api_key=api_key)
+
+def extract_learnings(project: str, git_log: str) -> list[dict]:
+    """Extract learnings from git activity using the configured provider."""
+    provider = cfg.get_provider()
     prompt = (
         f'Analyze git commit activity for project "{project}". '
         f'Extract 1-3 meaningful learnings (skip trivial commits/version bumps). '
         f'Focus on bugs fixed (failures), features added (successes), and technical decisions (plans/notes).\n\n'
         f'Git activity (last 24h):\n{git_log[:MAX_LOG_CHARS]}'
     )
-    try:
-        return call_haiku_tool(client, prompt, max_tokens=1000)
-    except Exception as e:
-        log(f"  Claude error for {project}: {e}")
-        return []
+
+    if provider == "anthropic":
+        try:
+            import anthropic
+        except ImportError:
+            log("ERROR: pip install anthropic")
+            return []
+        api_key = cfg.get_api_key("anthropic")
+        if not api_key:
+            log("ERROR: No Anthropic API key. Run: forgemem config anthropic --key sk-ant-...")
+            return []
+        client = anthropic.Anthropic(api_key=api_key)
+        try:
+            return call_haiku_tool(client, prompt, max_tokens=1000)
+        except Exception as e:
+            log(f"  Claude error for {project}: {e}")
+            return []
+    else:
+        return _extract_via_inference(prompt)
 
 
 def is_duplicate(content: str, project: str) -> bool:
@@ -193,8 +236,13 @@ def save_to_forgemem(project: str, learning: dict):
 def main():
     log("=== Forgemem Daily Scan ===")
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        log("ERROR: ANTHROPIC_API_KEY not set. Export it in your shell profile.")
+    provider = cfg.get_provider()
+    if provider != "ollama" and not cfg.get_api_key(provider):
+        log(
+            f"ERROR: No API key configured for provider '{provider}'.\n"
+            f"  Run: forgemem config {provider} --key <your-key>\n"
+            "  Or use local Ollama (free): forgemem config ollama"
+        )
         sys.exit(1)
 
     repos = find_git_repos()
@@ -282,13 +330,8 @@ def project_from_md_path(md_path: Path) -> str:
 
 
 def extract_md_learnings(project: str, filename: str, content: str) -> list[dict]:
-    """Call Claude Haiku to extract durable learnings from a memory .md file."""
-    try:
-        import anthropic
-    except ImportError:
-        return []
-
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    """Extract durable learnings from a memory .md file using the configured provider."""
+    provider = cfg.get_provider()
     prompt = (
         f'Read memory file "{filename}" for project "{project}". '
         f'Extract 1-4 durable, actionable learnings worth preserving long-term. '
@@ -296,11 +339,23 @@ def extract_md_learnings(project: str, filename: str, content: str) -> list[dict
         f'Skip: obvious facts, in-progress TODOs, things that will change soon.\n\n'
         f'Memory file content:\n{content[:MAX_MD_CHARS]}'
     )
-    try:
-        return call_haiku_tool(client, prompt, max_tokens=1200)
-    except Exception as e:
-        log(f"  Claude error for {filename}: {e}")
-        return []
+
+    if provider == "anthropic":
+        try:
+            import anthropic
+        except ImportError:
+            return []
+        api_key = cfg.get_api_key("anthropic")
+        if not api_key:
+            return []
+        client = anthropic.Anthropic(api_key=api_key)
+        try:
+            return call_haiku_tool(client, prompt, max_tokens=1200)
+        except Exception as e:
+            log(f"  Claude error for {filename}: {e}")
+            return []
+    else:
+        return _extract_via_inference(prompt)
 
 
 def scan_memory_docs() -> int:

@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.10] — 2026-03-28
+
+- Fix: remove unused `INIT_SQL` import in `test_cli.py` (lint clean)
+
 ## [0.1.9] — 2026-03-28
 
 - Fix: `forgemem init` and `forgemem start` now exit with code 1 when no inference provider is configured — agents that ignore warning panels can no longer silently proceed to start without a working provider
