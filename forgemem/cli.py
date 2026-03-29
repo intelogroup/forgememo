@@ -228,52 +228,41 @@ def _detect_project_from_git() -> Optional[str]:
 
 
 def _prompt_provider_setup(yes: bool) -> None:
-    """If no provider is configured, detect env vars or prompt user to pick one."""
+    """If no provider is configured, require interactive provider selection."""
     from forgemem import config as fm_cfg
 
     if fm_cfg.load().get("provider") is not None:
         return  # already configured (e.g. Ollama was just set above)
 
-    # Auto-detect from existing env vars
-    env_map = {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openai":    "OPENAI_API_KEY",
-        "gemini":    "GEMINI_API_KEY",
-    }
-    for provider, env_var in env_map.items():
-        if os.environ.get(env_var):
-            fm_cfg.set_provider(provider)
-            console.print(f"[green]Provider auto-set to {provider}[/] (detected {env_var})")
-            return
-
     # Non-interactive mode: warn visibly and skip
-    if yes:
+    if yes or not sys.stdin.isatty():
         console.print(Panel(
-            "[bold yellow]Provider not configured — required before memories can be distilled.[/]\n\n"
-            "Run one of:\n"
-            "  [cyan]forgemem config anthropic --key sk-ant-...[/]\n"
-            "  [cyan]forgemem config openai    --key sk-...[/]\n"
-            "  [cyan]forgemem config gemini    --key AIza...[/]\n"
-            "  [cyan]forgemem config ollama[/]               [dim](local, free)[/]\n"
-            "  [cyan]forgemem config forgemem[/]             [dim](managed, no key needed)[/]",
-            title="[bold red]ACTION REQUIRED[/]",
+            "[bold yellow]Interactive provider setup is required on first run.[/]\n\n"
+            "Re-run [cyan]forgemem init[/] in a real terminal to choose your provider.\n"
+            "Agents and non-TTY sessions cannot bypass this step.\n\n"
+            "If you already configured a provider earlier, run:\n"
+            "  [cyan]forgemem start[/]",
+            title="[bold red]INTERACTIVE SETUP REQUIRED[/]",
             border_style="red",
             expand=False,
         ))
-        return
+        raise typer.Exit(code=1)
 
     # Interactive menu
-    console.print("\n[bold]Choose an inference provider for memory distillation:[/]")
-    console.print("  [cyan]1[/]  forgemem   (managed — no key needed, sign in once)")
-    console.print("  [cyan]2[/]  anthropic  (BYOK — needs ANTHROPIC_API_KEY)")
-    console.print("  [cyan]3[/]  openai     (BYOK — needs OPENAI_API_KEY)")
-    console.print("  [cyan]4[/]  gemini     (BYOK — needs GEMINI_API_KEY)")
-    console.print("  [cyan]5[/]  ollama     (local, free, private — needs ollama running)")
-    console.print("  [cyan]6[/]  skip for now  (configure later with forgemem config)\n")
-
-    choice = typer.prompt("Enter number", default="6")
-    choice_map = {"1": "forgemem", "2": "anthropic", "3": "openai", "4": "gemini", "5": "ollama"}
-    provider = choice_map.get(choice)
+    import questionary  # lazy: only needed for the interactive provider picker
+    _choices = [
+        questionary.Choice("forgemem   (managed — no key needed, sign in once)", value="forgemem"),
+        questionary.Choice("anthropic  (BYOK — needs ANTHROPIC_API_KEY)", value="anthropic"),
+        questionary.Choice("openai     (BYOK — needs OPENAI_API_KEY)", value="openai"),
+        questionary.Choice("gemini     (BYOK — needs GEMINI_API_KEY)", value="gemini"),
+        questionary.Choice("ollama     (local, free, private — needs ollama running)", value="ollama"),
+        questionary.Choice("skip for now  (configure later with forgemem config)", value=None),
+    ]
+    provider = questionary.select(
+        "Choose an inference provider for memory distillation:",
+        choices=_choices,
+        default=_choices[-1],
+    ).ask()
 
     if not provider:
         console.print("[dim]Skipped — run [cyan]forgemem config[/] to set a provider later.[/]")
@@ -281,7 +270,8 @@ def _prompt_provider_setup(yes: bool) -> None:
 
     if provider == "forgemem":
         fm_cfg.set_provider("forgemem")
-        console.print("[green]Provider set to forgemem.[/] Run [cyan]forgemem auth login[/] to authenticate.")
+        console.print("[green]Provider set to forgemem.[/] Let's authenticate now...")
+        _do_auth_login()
         return
 
     if provider == "ollama":
@@ -299,8 +289,8 @@ def _prompt_provider_setup(yes: bool) -> None:
         console.print(f"[green]Provider set to {provider}[/] — API key stored in {fm_cfg.CONFIG_PATH}")
     else:
         console.print(
-            f"[green]Provider set to {provider}.[/] "
-            f"[dim]Set [cyan]{env_map[provider]}[/] env var to supply the key.[/]"
+        f"[green]Provider set to {provider}.[/] "
+            f"[dim]Set [cyan]{provider.upper()}_API_KEY[/] env var to supply the key.[/]"
         )
 
 
@@ -314,10 +304,6 @@ def init(
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts"),
 ):
     """Initialize DB, register MCP server, and detect agent skills."""
-    # Auto non-interactive when stdin is not a TTY (e.g. agent-driven installs)
-    if not yes and not sys.stdin.isatty():
-        yes = True
-
     # Python version guard
     if sys.version_info < (3, 9):
         console.print("[red]error:[/] Python 3.9+ required")
@@ -343,29 +329,8 @@ def init(
     # Skill auto-detect
     _auto_detect_and_generate_skills(yes)
 
-    # Ollama auto-detect (only if provider not yet configured)
-    from forgemem import config as fm_cfg
-    from forgemem.config import detect_ollama
-
-    if fm_cfg.load().get("provider") is None:
-        ollama = detect_ollama()
-        if ollama:
-            models_str = ", ".join(ollama["models"][:5]) or "no models pulled yet"
-            console.print(f"\n[cyan]Ollama detected[/] at {ollama['url']}")
-            console.print(f"  Available models: {models_str}")
-            use_ollama = yes or typer.confirm(
-                "Use Ollama as your inference provider? (free, private, local)",
-                default=True,
-            )
-            if use_ollama:
-                best = ollama["models"][0] if ollama["models"] else fm_cfg.DEFAULT_MODELS["ollama"]
-                fm_cfg.set_provider("ollama")
-                cfg_data = fm_cfg.load()
-                cfg_data["model"] = best
-                fm_cfg.save(cfg_data)
-                console.print(f"[green]Provider set to ollama[/] using model [bold]{best}[/]")
-
     # Provider setup — runs only if still unconfigured (Ollama declined or not detected)
+    from forgemem import config as fm_cfg
     _prompt_provider_setup(yes)
 
     provider_configured = fm_cfg.load().get("provider") is not None
@@ -850,6 +815,67 @@ def config(
     console.print(msg)
 
 
+def _do_auth_login() -> bool:
+    """Run the browser-based OAuth login flow. Returns True on success, exits on failure."""
+    import webbrowser
+    import http.server
+    import threading
+    import secrets
+    import urllib.parse
+    from forgemem import config as fm_cfg
+
+    port = 47474
+    state = secrets.token_urlsafe(16)
+    received_token: dict = {}
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            if params.get("state", [""])[0] == state and "token" in params:
+                received_token["value"] = params["token"][0]
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"<h2>Authenticated! You can close this tab.</h2>")
+            else:
+                self.send_response(400)
+                self.end_headers()
+
+        def log_message(self, *args):  # silence request logs
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", port), _Handler)
+
+    def _serve():
+        server.handle_request()  # handle one request then stop
+
+    t = threading.Thread(target=_serve, daemon=True)
+    t.start()
+
+    login_url = (
+        f"https://app.forgemem.com/cli-auth"
+        f"?callback=http://127.0.0.1:{port}/callback"
+        f"&state={state}"
+    )
+    console.print(f"Opening browser to authenticate...\n{login_url}")
+    webbrowser.open(login_url)
+    console.print("[dim]Waiting for browser callback (Ctrl+C to cancel)...[/]")
+
+    t.join(timeout=120)
+
+    if received_token.get("value"):
+        cfg_data = fm_cfg.load()
+        cfg_data["forgemem_token"] = received_token["value"]
+        cfg_data["provider"] = "forgemem"
+        fm_cfg.save(cfg_data)
+        console.print("[green]Authenticated![/] Provider set to Forgemem Inference.")
+        console.print("[dim]Your $5 free credits are ready.[/]")
+        return True
+    else:
+        console.print("[red]Login timed out or was cancelled.[/]")
+        raise typer.Exit(1)
+
+
 @app.command()
 def auth(
     action: str = typer.Argument("status", help="login | logout | status"),
@@ -861,11 +887,6 @@ def auth(
       forgemem auth status   # show current auth state\n
       forgemem auth logout   # remove stored token\n
     """
-    import webbrowser
-    import http.server
-    import threading
-    import secrets
-    import urllib.parse
     from forgemem import config as fm_cfg
 
     if action == "status":
@@ -889,55 +910,7 @@ def auth(
         return
 
     if action == "login":
-        port = 47474
-        state = secrets.token_urlsafe(16)
-        received_token: dict = {}
-
-        class _Handler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                parsed = urllib.parse.urlparse(self.path)
-                params = urllib.parse.parse_qs(parsed.query)
-                if params.get("state", [""])[0] == state and "token" in params:
-                    received_token["value"] = params["token"][0]
-                    self.send_response(200)
-                    self.end_headers()
-                    self.wfile.write(b"<h2>Authenticated! You can close this tab.</h2>")
-                else:
-                    self.send_response(400)
-                    self.end_headers()
-
-            def log_message(self, *args):  # silence request logs
-                pass
-
-        server = http.server.HTTPServer(("127.0.0.1", port), _Handler)
-
-        def _serve():
-            server.handle_request()  # handle one request then stop
-
-        t = threading.Thread(target=_serve, daemon=True)
-        t.start()
-
-        login_url = (
-            f"https://app.forgemem.com/cli-auth"
-            f"?callback=http://127.0.0.1:{port}/callback"
-            f"&state={state}"
-        )
-        console.print(f"Opening browser to authenticate...\n{login_url}")
-        webbrowser.open(login_url)
-        console.print("[dim]Waiting for browser callback (Ctrl+C to cancel)...[/]")
-
-        t.join(timeout=120)
-
-        if received_token.get("value"):
-            cfg_data = fm_cfg.load()
-            cfg_data["forgemem_token"] = received_token["value"]
-            cfg_data["provider"] = "forgemem"
-            fm_cfg.save(cfg_data)
-            console.print("[green]Authenticated![/] Provider set to Forgemem Inference.")
-            console.print("[dim]Your $5 free credits are ready.[/]")
-        else:
-            console.print("[red]Login timed out or was cancelled.[/]")
-            raise typer.Exit(1)
+        _do_auth_login()
         return
 
     console.print(f"[red]Unknown action '{action}'.[/] Use: login | logout | status")
@@ -982,7 +955,9 @@ def sync(
             console.print("[yellow]No local DB found.[/] Run: forgemem init")
             raise typer.Exit(1)
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.row_factory = sqlite3.Row
 
         traces = [
@@ -1060,7 +1035,9 @@ def sync(
                 console.print("[yellow]No local DB found.[/] Run: forgemem init")
                 raise typer.Exit(1)
 
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(DB_PATH, timeout=10)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             inserted_t = inserted_p = 0
             for t in remote_traces:
                 try:

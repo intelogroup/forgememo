@@ -198,7 +198,9 @@ def extract_learnings(project: str, git_log: str) -> list[dict]:
 def is_duplicate(content: str, project: str) -> bool:
     """Check if a near-identical trace already exists in the DB."""
     import sqlite3
-    conn = sqlite3.connect(FORGEMEM_DIR / "forgemem_memory.db")
+    conn = sqlite3.connect(FORGEMEM_DIR / "forgemem_memory.db", timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     try:
         fingerprint = content[:120].strip()
         row = conn.execute(

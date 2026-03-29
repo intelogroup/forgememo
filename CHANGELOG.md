@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.1.12] — 2026-03-29
+
+- Feature: selecting forgemem as provider during `forgemem init` now immediately triggers browser OAuth login — no separate `forgemem auth login` step required
+- Fix: SQLite WAL mode + `timeout=10` + `PRAGMA busy_timeout=5000` applied consistently across all connection sites (core.py, api.py, mcp_server.py, query_tool.py, scanner.py, cli.py) to eliminate "database is locked" errors under concurrent terminal sessions
+
+## [0.1.11] — 2026-03-29
+
+- Change: first-run `forgemem init` now requires an interactive TTY for provider selection; `--yes` no longer lets agents or piped sessions bypass provider choice
+- Change: install docs and agent skill files now instruct users to run `forgemem init` interactively instead of the previous unattended `init --yes` path
+
 ## [0.1.10] — 2026-03-28
 
 - Fix: remove unused `INIT_SQL` import in `test_cli.py` (lint clean)

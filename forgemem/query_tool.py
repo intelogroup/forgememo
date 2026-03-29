@@ -23,7 +23,6 @@ Then add to ~/.claude/settings.json:
 import os
 import sqlite3
 import sys
-import json
 from pathlib import Path
 from typing import Optional
 
@@ -42,7 +41,9 @@ def _conn() -> Optional[sqlite3.Connection]:
     """Get DB connection with row factory."""
     if not DB_PATH.exists():
         return None
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -73,27 +74,31 @@ def search_principles(
     has_project = bool(project)
     has_type = bool(type_filter)
     
-    base = "SELECT p.id, p.ts, p.project_tag, p.type, p.principle, p.impact_score, p.tags FROM principles p WHERE p.id IN (SELECT rowid FROM principles_fts WHERE principles_fts MATCH ?) AND p.impact_score >= ? "
-    
+    _base = (
+        "SELECT p.id, p.ts, p.project_tag, p.type, p.principle, p.impact_score, p.tags"
+        " FROM principles p"
+        " WHERE p.id IN (SELECT rowid FROM principles_fts WHERE principles_fts MATCH ?)"
+        " AND p.impact_score >= ? "
+    )
+
     params = [query, min_score]
-    suffix = ""
-    
+
     if has_project and has_type:
         params.extend([project, type_filter])
-        suffix = "AND p.project_tag = ? AND p.type = ? ORDER BY p.impact_score DESC, p.ts DESC LIMIT ?"
+        sql = _base + "AND p.project_tag = ? AND p.type = ? ORDER BY p.impact_score DESC, p.ts DESC LIMIT ?"
     elif has_project:
         params.append(project)
-        suffix = "AND p.project_tag = ? ORDER BY p.impact_score DESC, p.ts DESC LIMIT ?"
+        sql = _base + "AND p.project_tag = ? ORDER BY p.impact_score DESC, p.ts DESC LIMIT ?"
     elif has_type:
         params.append(type_filter)
-        suffix = "AND p.type = ? ORDER BY p.impact_score DESC, p.ts DESC LIMIT ?"
+        sql = _base + "AND p.type = ? ORDER BY p.impact_score DESC, p.ts DESC LIMIT ?"
     else:
-        suffix = "ORDER BY p.impact_score DESC, p.ts DESC LIMIT ?"
-    
+        sql = _base + "ORDER BY p.impact_score DESC, p.ts DESC LIMIT ?"
+
     params.append(k)
-    
+
     try:
-        rows = conn.execute(base + suffix, params).fetchall()
+        rows = conn.execute(sql, params).fetchall()
         results = [
             {
                 "id": r["id"],
@@ -156,30 +161,31 @@ def search_traces(
     has_project = bool(project)
     has_type = bool(type_filter)
     
-    base = "SELECT t.id, t.ts, t.project_tag, t.type, t.content, t.distilled FROM traces t WHERE t.id IN (SELECT rowid FROM traces_fts WHERE traces_fts MATCH ?) "
-    
-    if distilled_only:
-        base += "AND t.distilled = 1 "
-    
+    _base = (
+        "SELECT t.id, t.ts, t.project_tag, t.type, t.content, t.distilled"
+        " FROM traces t"
+        " WHERE t.id IN (SELECT rowid FROM traces_fts WHERE traces_fts MATCH ?)"
+        + (" AND t.distilled = 1 " if distilled_only else " ")
+    )
+
     params = [query]
-    suffix = ""
-    
+
     if has_project and has_type:
         params.extend([project, type_filter])
-        suffix = "AND t.project_tag = ? AND t.type = ? ORDER BY t.ts DESC LIMIT ?"
+        sql = _base + "AND t.project_tag = ? AND t.type = ? ORDER BY t.ts DESC LIMIT ?"
     elif has_project:
         params.append(project)
-        suffix = "AND t.project_tag = ? ORDER BY t.ts DESC LIMIT ?"
+        sql = _base + "AND t.project_tag = ? ORDER BY t.ts DESC LIMIT ?"
     elif has_type:
         params.append(type_filter)
-        suffix = "AND t.type = ? ORDER BY t.ts DESC LIMIT ?"
+        sql = _base + "AND t.type = ? ORDER BY t.ts DESC LIMIT ?"
     else:
-        suffix = "ORDER BY t.ts DESC LIMIT ?"
-    
+        sql = _base + "ORDER BY t.ts DESC LIMIT ?"
+
     params.append(k)
-    
+
     try:
-        rows = conn.execute(base + suffix, params).fetchall()
+        rows = conn.execute(sql, params).fetchall()
         results = [
             {
                 "id": r["id"],

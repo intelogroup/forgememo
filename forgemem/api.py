@@ -58,8 +58,10 @@ class DBPool:
         self.db_path = db_path
         self.queue = Queue(maxsize=pool_size)
         for _ in range(pool_size):
-            conn = sqlite3.connect(str(db_path), check_same_thread=False)
+            conn = sqlite3.connect(str(db_path), timeout=10, check_same_thread=False)
             conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.execute("PRAGMA foreign_keys=ON")
             self.queue.put(conn)
     
@@ -80,7 +82,7 @@ class DBPool:
             try:
                 conn = self.queue.get_nowait()
                 conn.close()
-            except:
+            except Exception:
                 pass
 
 
@@ -441,7 +443,7 @@ def create_app():
         """
         try:
             data = request.get_json() or {}
-        except:
+        except Exception:
             return jsonify({
                 "error": "invalid_json",
                 "message": "Invalid JSON body",
@@ -674,7 +676,7 @@ def create_app():
         
         try:
             # Validate ISO timestamp format
-            since_dt = datetime.fromisoformat(since.replace('Z', '+00:00'))
+            datetime.fromisoformat(since.replace('Z', '+00:00'))
         except ValueError:
             return jsonify({
                 "error": "invalid_since",
@@ -740,7 +742,7 @@ def create_app():
         """
         try:
             data = request.get_json() or {}
-        except:
+        except Exception:
             return jsonify({
                 "error": "invalid_json",
                 "message": "Invalid JSON body",
@@ -894,8 +896,6 @@ def enqueue_webhook_delivery(trace_id, webhook_id, trace):
 
 def webhook_retry_worker():
     """Background worker: retries pending webhooks with exponential backoff."""
-    retry_delays = [300, 1800, 7200, 43200, 86400]  # 5m, 30m, 2h, 12h, 24h
-    
     while True:
         try:
             time.sleep(WEBHOOK_RETRY_INTERVAL)
@@ -916,7 +916,6 @@ def webhook_retry_worker():
 
 def attempt_webhook_delivery(queue_entry, conn=None):
     """Attempt to deliver a webhook."""
-    should_close = conn is None
     if conn is None:
         with get_db() as conn_inner:
             _attempt_webhook_delivery_impl(queue_entry, conn_inner)
