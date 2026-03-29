@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.6] — 2026-03-28
+
+- Fix: `__version__` in `forgemem/__init__.py` was not bumped when 0.1.5 was released — `pip show forgemem` reported 0.1.5 but `forgemem.__version__` returned 0.1.4
+
+## [0.1.5] — 2026-03-28
+
+- Internal release (version string mismatch — superseded by 0.1.6)
+
 ## [0.1.4] — 2026-03-28
 
 Bug fixes and agent UX improvements:

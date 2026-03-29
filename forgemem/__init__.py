@@ -1,2 +1,2 @@
 """Forgemem — persistent memory for AI agents."""
-__version__ = "0.1.4"
+__version__ = "0.1.6"
