@@ -23,6 +23,7 @@ from typing import Annotated, Any
 
 import anthropic
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -34,6 +35,16 @@ from usage import RateLimitExceeded, check_rate_limit
 
 app = FastAPI(title="Forgemem Inference API", version="0.4.0")
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
+
+_WEBAPP_ORIGIN = os.getenv("WEBAPP_ORIGIN", "http://localhost:3000")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[_WEBAPP_ORIGIN],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 PLATFORM_FEE_USD  = float(os.environ.get("PLATFORM_FEE_USD", "0.02"))
@@ -76,6 +87,11 @@ class SyncPushRequest(BaseModel):
     principles: list[dict[str, Any]] = []
 
 
+class WebappSendLinkRequest(BaseModel):
+    email: str
+    callback_url: str
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +128,12 @@ def _validate_cli_callback(callback: str) -> None:
             status_code=400,
             detail="Invalid callback: must be a loopback address (http://127.0.0.1:<port>/...)",
         )
+
+
+def _validate_webapp_callback(url: str) -> bool:
+    """Callback must start with the configured WEBAPP_ORIGIN."""
+    return url.startswith(_WEBAPP_ORIGIN + "/") or url == _WEBAPP_ORIGIN
+
 
 
 def _now_iso() -> str:
@@ -243,6 +265,98 @@ async def sync_pull(
 
 
 # ---------------------------------------------------------------------------
+# Webapp auth routes (magic link — no loopback validation)
+# ---------------------------------------------------------------------------
+
+@app.post("/webapp-auth/send-link")
+async def webapp_auth_send_link(body: WebappSendLinkRequest):
+    """Generate a magic link token for the webapp and email it to the user."""
+    from email_sender import send_magic_link
+
+    email = body.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+
+    if not _validate_webapp_callback(body.callback_url):
+        raise HTTPException(status_code=400, detail="Invalid callback URL")
+
+    token = create_magic_link_token()
+    db.create_magic_link_token(token, email, body.callback_url, "", ttl=600)
+
+    verify_url = f"{API_BASE_URL}/webapp-auth/verify?token={_urlparse.quote(token)}"
+    send_magic_link(email, verify_url)
+
+    return {"ok": True}
+
+
+@app.get("/webapp-auth/verify")
+async def webapp_auth_verify(token: str = ""):
+    """Verify magic link token, issue JWT, redirect to Next.js callback."""
+    row = db.consume_magic_link_token(token)
+    if not row:
+        raise HTTPException(status_code=400, detail="Link expired or already used")
+
+    email = row["email"]
+    callback_url = row["callback"]
+
+    if not _validate_webapp_callback(callback_url):
+        raise HTTPException(status_code=400, detail="Invalid callback URL")
+
+    user = db.get_user_by_email(email)
+    if user is None:
+        db.create_user(email, initial_balance=FREE_CREDIT_USD)
+        user = db.get_user_by_email(email)
+
+    jwt_token = create_session_token(user["id"])
+    safe_token = _urlparse.quote(jwt_token)
+    redirect_url = f"{callback_url}?token={safe_token}"
+
+    return RedirectResponse(url=redirect_url, status_code=302)
+
+
+# ---------------------------------------------------------------------------
+# Webapp API routes (stats, activity, settings)
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/stats")
+async def stats(authorization: Annotated[str, Header()]):
+    """Return usage stats for the authenticated user."""
+    billing_user = _auth_user(authorization)
+    user_id = billing_user["id"]
+
+    result: dict[str, Any] = {
+        "total_runs": db.count_runs(user_id),
+        "balance_usd": round(billing_user["balance_usd"], 2),
+    }
+
+    trace_count = db.count_synced_traces(user_id)
+    if trace_count > 0:
+        result["traces"] = trace_count
+        result["principles"] = db.count_synced_principles(user_id)
+        result["projects"] = db.get_synced_projects(user_id)
+
+    return result
+
+
+@app.get("/v1/activity")
+async def activity(authorization: Annotated[str, Header()]):
+    """Return recent 20 usage runs for the authenticated user."""
+    billing_user = _auth_user(authorization)
+    runs = db.get_recent_runs(billing_user["id"], limit=20)
+    return [
+        {"model": r["model"], "cost_usd": r["cost_usd"], "ts": str(r["ts"])}
+        for r in runs
+    ]
+
+
+@app.get("/v1/user/settings")
+async def user_settings(authorization: Annotated[str, Header()]):
+    """Return user settings (provider info)."""
+    _auth_user(authorization)
+    return {"provider": "forgemem"}
+
+
+# ---------------------------------------------------------------------------
 # CLI auth routes (magic link — no external auth provider)
 # ---------------------------------------------------------------------------
 
@@ -312,8 +426,7 @@ async def cli_auth_verify(request: Request):
     db.create_session(jwt_token, user["id"])
     safe_token = _urlparse.quote(jwt_token)
     safe_state = _urlparse.quote(state)
-    # Use the callback stored in the DB (validated at send-link time), not the query param,
-    # so the redirect target is never sourced from the current request.
+    # Use the callback stored in the DB (validated at send-link time), not the query param.
     stored_cb = row["callback"]
     parsed_cb = _urlparse.urlparse(stored_cb)
     cb_port = int(parsed_cb.port)

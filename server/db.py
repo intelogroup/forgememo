@@ -85,6 +85,8 @@ _SCHEMA_SQLITE = [
         created_at  INTEGER NOT NULL,
         expires_at  INTEGER NOT NULL
     )""",
+    "CREATE INDEX IF NOT EXISTS idx_usage_runs_user_ts ON usage_runs (user_id, ts)",
+    "CREATE INDEX IF NOT EXISTS idx_sync_traces_user ON sync_traces (user_id)",
 ]
 
 _SCHEMA_MYSQL = [
@@ -155,6 +157,8 @@ _SCHEMA_MYSQL = [
         created_at  BIGINT NOT NULL,
         expires_at  BIGINT NOT NULL
     )""",
+    "CREATE INDEX IF NOT EXISTS idx_usage_runs_user_ts ON usage_runs (user_id, ts)",
+    "CREATE INDEX IF NOT EXISTS idx_sync_traces_user ON sync_traces (user_id)",
 ]
 
 
@@ -210,7 +214,16 @@ class Database:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as conn:
             for stmt in schema:
-                self._exec(conn, stmt)
+                if self._mysql and stmt.lstrip().upper().startswith("CREATE INDEX"):
+                    try:
+                        self._exec(conn, stmt)
+                    except Exception as e:
+                        if "Duplicate key name" in str(e):
+                            pass
+                        else:
+                            raise
+                else:
+                    self._exec(conn, stmt)
             conn.commit()
 
     # ---- Users ----
@@ -328,6 +341,7 @@ class Database:
                 return None
             return self._fetchone(conn, self._q("SELECT * FROM users WHERE id=?"), (row["user_id"],))
 
+
     # ---- Stripe ----
 
     def stripe_event_seen(self, event_id: str) -> bool:
@@ -429,3 +443,63 @@ class Database:
             params += (exclude_device,)
         with self._conn() as conn:
             return self._fetchall(conn, sql, params)
+
+    # ---- Stats / Activity ----
+
+    def count_runs(self, user_id: str) -> int:
+        """Total usage_runs count for user."""
+        with self._conn() as conn:
+            cur = self._exec(
+                conn,
+                self._q("SELECT COUNT(*) as cnt FROM usage_runs WHERE user_id=?"),
+                (user_id,),
+            )
+            row = cur.fetchone()
+        return (dict(row).get("cnt") or 0) if row else 0
+
+    def get_recent_runs(self, user_id: str, limit: int = 20) -> list[dict]:
+        """Recent usage_runs rows: model, cost_usd, ts columns."""
+        with self._conn() as conn:
+            return self._fetchall(
+                conn,
+                self._q(
+                    "SELECT model, cost_usd, ts FROM usage_runs "
+                    "WHERE user_id=? ORDER BY ts DESC LIMIT ?"
+                ),
+                (user_id, limit),
+            )
+
+    def count_synced_traces(self, user_id: str) -> int:
+        """Count of sync_traces rows for user."""
+        with self._conn() as conn:
+            cur = self._exec(
+                conn,
+                self._q("SELECT COUNT(*) as cnt FROM sync_traces WHERE user_id=?"),
+                (user_id,),
+            )
+            row = cur.fetchone()
+        return (dict(row).get("cnt") or 0) if row else 0
+
+    def count_synced_principles(self, user_id: str) -> int:
+        """Count of sync_principles rows for user."""
+        with self._conn() as conn:
+            cur = self._exec(
+                conn,
+                self._q("SELECT COUNT(*) as cnt FROM sync_principles WHERE user_id=?"),
+                (user_id,),
+            )
+            row = cur.fetchone()
+        return (dict(row).get("cnt") or 0) if row else 0
+
+    def get_synced_projects(self, user_id: str) -> list[str]:
+        """Distinct project names from sync_traces for user."""
+        with self._conn() as conn:
+            rows = self._fetchall(
+                conn,
+                self._q(
+                    "SELECT DISTINCT project_tag FROM sync_traces "
+                    "WHERE user_id=? AND project_tag IS NOT NULL AND project_tag != ''"
+                ),
+                (user_id,),
+            )
+        return [r["project_tag"] for r in rows]
