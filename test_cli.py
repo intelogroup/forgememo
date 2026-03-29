@@ -368,3 +368,46 @@ class TestStop:
         assert result.exit_code == 0, result.output
         assert not server_plist.exists(), "server plist should be removed"
         assert not miner_plist.exists(), "miner plist should be removed"
+
+
+# ---------------------------------------------------------------------------
+# Version sync: pyproject.toml and __init__.py must always agree
+# ---------------------------------------------------------------------------
+
+class TestVersionSync:
+    def test_version_matches_package_metadata(self):
+        """forgemem.__version__ must equal importlib.metadata.version('forgemem')."""
+        from importlib.metadata import version as pkg_version
+        import forgemem
+        assert forgemem.__version__ == pkg_version("forgemem"), (
+            f"forgemem.__version__ ({forgemem.__version__!r}) != "
+            f"installed package metadata ({pkg_version('forgemem')!r}). "
+            "Run 'pip install -e .' to sync."
+        )
+
+    def test_pyproject_version_matches_init(self):
+        """pyproject.toml version must equal forgemem.__version__ at import time."""
+        import sys
+        from pathlib import Path
+        import forgemem
+
+        pyproject = Path(__file__).parent / "pyproject.toml"
+        if sys.version_info >= (3, 11):
+            import tomllib
+            data = tomllib.loads(pyproject.read_text())
+        else:
+            try:
+                import tomli
+                data = tomli.loads(pyproject.read_text())
+            except ImportError:
+                import re
+                match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(), re.MULTILINE)
+                assert match, "Could not parse version from pyproject.toml"
+                data = {"project": {"version": match.group(1)}}
+
+        pyproject_ver = data["project"]["version"]
+        assert pyproject_ver == forgemem.__version__, (
+            f"pyproject.toml version ({pyproject_ver!r}) != "
+            f"forgemem.__version__ ({forgemem.__version__!r}). "
+            "Bump pyproject.toml and reinstall with 'pip install -e .'."
+        )

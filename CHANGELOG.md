@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.7] — 2026-03-28
+
+- Fix: eliminate version string duplication between `pyproject.toml` and `forgemem/__init__.py` — `__init__.py` now derives `__version__` from `importlib.metadata` at runtime, making `pyproject.toml` the single source of truth
+- Add: `TestVersionSync` tests assert that `forgemem.__version__`, installed package metadata, and `pyproject.toml` all agree — prevents future drift
+
 ## [0.1.6] — 2026-03-28
 
 - Fix: `__version__` in `forgemem/__init__.py` was not bumped when 0.1.5 was released — `pip show forgemem` reported 0.1.5 but `forgemem.__version__` returned 0.1.4
