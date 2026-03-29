@@ -5,17 +5,16 @@ You have access to Forgemem, your persistent long-term memory across sessions an
 
 ## Setup (first time only)
 
-If forgemem is not yet initialized, run these commands in order — no user input required:
+If forgemem is not yet initialized, ask the user to run this in a real terminal:
 
 ```bash
 pip install forgemem
-forgemem init --yes
-forgemem start
+forgemem init
 ```
 
 Then tell the user: "Forgemem is installed. Please restart Claude Code to activate the memory MCP connection."
 
-Do NOT run `forgemem init` without `--yes` — it has interactive prompts that will block.
+Do NOT try to bypass first-run setup with `forgemem init --yes` or a non-TTY session. The user must choose a provider interactively.
 
 ## At Session Start
 

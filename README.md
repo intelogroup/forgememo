@@ -22,11 +22,10 @@ Without Forgemem, agents repeat your mistakes. With it, they skip straight to wh
 
 ```bash
 pip install forgemem
-forgemem init --yes
-forgemem start
+forgemem init
 ```
 
-Then **restart your AI agent** (Claude Code, Gemini CLI, or Codex) to pick up the new MCP connection. That's it — no API key required to get started.
+`forgemem init` now requires a real TTY on first run so the user must choose an inference provider interactively. Agents cannot bypass that step with `--yes` or a piped session. After `init` completes, it auto-starts the MCP server; then **restart your AI agent** (Claude Code, Gemini CLI, or Codex) to pick up the new MCP connection.
 
 ---
 
@@ -46,11 +45,8 @@ Agents call `retrieve_memories` before starting any task. That one call surfaces
 # Install
 pip install forgemem
 
-# Initialize (non-interactive, agent-safe)
-forgemem init --yes
-
-# Start the MCP server (macOS: installs a LaunchAgent that survives reboots)
-forgemem start
+# Initialize (interactive on first run)
+forgemem init
 
 # Optionally: also schedule background mining every hour
 forgemem start --mine
@@ -88,7 +84,7 @@ forgemem status
 ## CLI Reference
 
 ```bash
-forgemem init --yes          # Initialize DB, register MCP, write skill files
+forgemem init                # Initialize DB, choose provider, register MCP, write skill files
 forgemem start               # Start MCP server (background daemon on macOS)
 forgemem start --mine        # Also install a scheduled mining agent (hourly)
 forgemem stop                # Stop the daemon
@@ -109,11 +105,11 @@ Forgemem uses an LLM for mining and distillation. Three options:
 
 | Provider | Setup | Cost |
 |----------|-------|------|
-| **Forgemem managed** | `forgemem auth login` | Free tier + paid plans |
-| **Ollama** (local) | Auto-detected if running | Free, fully private |
+| **Forgemem managed** | choose it in `forgemem init`, then run `forgemem auth login` | Free tier + paid plans |
+| **Ollama** (local) | choose it in `forgemem init` | Free, fully private |
 | **BYOK** (Anthropic / OpenAI / Gemini) | `forgemem config <provider> --key <key>` | Your API costs |
 
-`forgemem init` auto-detects Ollama and env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`). The `mine_session` and `distill_session` MCP tools work with any subscription — no separate key needed since the agent itself is the LLM.
+`forgemem init` now requires the user to choose a provider interactively on first run. The `mine_session` and `distill_session` MCP tools still work with any subscription — no separate key needed since the agent itself is the LLM.
 
 ---
 

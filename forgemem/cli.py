@@ -569,6 +569,19 @@ def status(
     from forgemem import config as fm_cfg
     from forgemem.config import detect_ollama
 
+    # Credits-exhausted warning (shown before anything else)
+    flag = fm_cfg.get_credits_flag()
+    if flag and not json_output:
+        console.print(Panel(
+            f"[bold]Scheduled runs have stopped — inference credits exhausted.[/]\n\n"
+            f"Balance: [red]${flag['balance_usd']}[/]  ·  Last failed: {flag['ts'][:10]}\n\n"
+            f"  Add credits → [cyan]https://app.forgemem.com/billing[/]\n"
+            f"  Or switch provider → [cyan]forgemem config provider anthropic --key sk-ant-...[/]",
+            title="[bold red]ACTION REQUIRED — credits exhausted[/]",
+            border_style="red",
+            expand=False,
+        ))
+
     # DB stats
     if not DB_PATH.exists():
         if json_output:
@@ -811,7 +824,10 @@ def config(
     else:
         msg += "\n[dim]No key stored — will fall back to env var[/]"
     if provider == "forgemem":
-        msg += "\n[yellow]Managed inference coming in v0.3 — for now use BYOK.[/]"
+        console.print(msg)
+        console.print("[green]Provider set to forgemem.[/] Let's authenticate now...")
+        _do_auth_login()
+        return
     console.print(msg)
 
 
@@ -852,8 +868,9 @@ def _do_auth_login() -> bool:
     t = threading.Thread(target=_serve, daemon=True)
     t.start()
 
+    _api_base = os.environ.get("FORGEMEM_API_URL", "https://app.forgemem.com")
     login_url = (
-        f"https://app.forgemem.com/cli-auth"
+        f"{_api_base}/cli-auth"
         f"?callback=http://127.0.0.1:{port}/callback"
         f"&state={state}"
     )
@@ -868,6 +885,7 @@ def _do_auth_login() -> bool:
         cfg_data["forgemem_token"] = received_token["value"]
         cfg_data["provider"] = "forgemem"
         fm_cfg.save(cfg_data)
+        fm_cfg.clear_credits_flag()
         console.print("[green]Authenticated![/] Provider set to Forgemem Inference.")
         console.print("[dim]Your $5 free credits are ready.[/]")
         return True

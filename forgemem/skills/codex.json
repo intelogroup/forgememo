@@ -2,13 +2,12 @@
   "forgemem_skill_version": 1,
   "description": "Forgemem persistent memory tools for AI agents",
   "setup": {
-    "description": "First-time setup — run these commands in order, no user input required",
+    "description": "First-time setup — requires the user to complete interactive provider selection",
     "commands": [
       "pip install forgemem",
-      "forgemem init --yes",
-      "forgemem start"
+      "forgemem init"
     ],
-    "note": "Always use 'forgemem init --yes' — omitting --yes blocks on interactive prompts. After setup, tell the user to restart Codex to activate the MCP connection."
+    "note": "Do not try to bypass first-run setup. The user must run 'forgemem init' in a real terminal and choose a provider interactively. After setup, tell the user to restart Codex to activate the MCP connection."
   },
   "tools": [
     {

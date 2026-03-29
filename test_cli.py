@@ -3,7 +3,7 @@
 Covers:
   - _ver()              : version string parsing
   - _check_for_update() : cache hit/miss/stale/direction/malformed/network-error
-  - init --yes          : auto non-interactive when stdin is not a TTY
+  - init provider guard : first-run provider setup requires an interactive TTY
   - start --mine        : miner plist written with correct content
   - stop                : miner plist unloaded and removed alongside server plist
 """
@@ -11,6 +11,8 @@ Covers:
 from __future__ import annotations
 
 import sys
+import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -156,55 +158,39 @@ class TestCheckForUpdate:
 
 
 # ---------------------------------------------------------------------------
-# init: auto non-interactive on non-TTY stdin
+# init: provider setup requires an interactive TTY
 # ---------------------------------------------------------------------------
 
-class TestInitNonTTY:
-    def test_auto_yes_when_no_tty(self, tmp_path):
-        """When stdin is not a TTY, init should never call typer.confirm or typer.prompt."""
-        confirm_calls = []
-        prompt_calls = []
-
+class TestInitRequiresTTY:
+    def test_init_exits_1_without_tty_when_provider_unconfigured(self, tmp_path):
+        """When no provider exists yet, non-TTY init must fail instead of bypassing setup."""
         with (
-            patch("forgemem.cli.Path.home", return_value=tmp_path),
             patch("forgemem.core.DB_PATH", tmp_path / "forgemem.db"),
-            patch("forgemem.core.get_conn") as mock_conn,
-            patch("forgemem.core.INIT_SQL", ""),
-            patch("typer.confirm", side_effect=lambda *a, **kw: confirm_calls.append(a) or True),
-            patch("typer.prompt", side_effect=lambda *a, **kw: prompt_calls.append(a) or "6"),
+            patch("forgemem.cli._register_mcp", return_value=False),
+            patch("forgemem.cli._auto_detect_and_generate_skills", return_value=None),
+            patch("forgemem.config.load", return_value={}),
             patch("sys.stdin") as mock_stdin,
-            patch("forgemem.cli._auto_detect_and_generate_skills"),
-            patch("forgemem.cli._prompt_provider_setup"),
-            patch("forgemem.config.load", return_value={"provider": "forgemem"}),
         ):
             mock_stdin.isatty.return_value = False
-            mock_conn.return_value.__enter__ = MagicMock(return_value=MagicMock())
-            mock_conn.return_value.__exit__ = MagicMock(return_value=False)
-            mock_conn.return_value.executescript = MagicMock()
-            mock_conn.return_value.commit = MagicMock()
-            mock_conn.return_value.close = MagicMock()
+            result = runner.invoke(app, ["init", "--yes"])
 
-            runner.invoke(app, ["init"])
+        assert result.exit_code == 1, result.output
+        assert "INTERACTIVE SETUP REQUIRED" in result.output
 
-        assert confirm_calls == [], f"typer.confirm was called: {confirm_calls}"
-        assert prompt_calls == [], f"typer.prompt was called: {prompt_calls}"
+    def test_init_without_tty_succeeds_when_provider_already_configured(self, tmp_path):
+        """Non-TTY init is allowed after provider setup has already happened."""
+        with (
+            patch("forgemem.core.DB_PATH", tmp_path / "forgemem.db"),
+            patch("forgemem.cli._register_mcp", return_value=False),
+            patch("forgemem.cli._auto_detect_and_generate_skills", return_value=None),
+            patch("forgemem.cli._do_start", return_value=None),
+            patch("forgemem.config.load", return_value={"provider": "forgemem"}),
+            patch("sys.stdin") as mock_stdin,
+        ):
+            mock_stdin.isatty.return_value = False
+            result = runner.invoke(app, ["init", "--yes"])
 
-    def test_tty_allows_prompts(self):
-        """When stdin IS a TTY and --yes not passed, yes=False (prompts allowed)."""
-        # Just verify the flag logic: isatty=True + no --yes → yes stays False
-        # We don't run the full command; just test the branch directly
-        original = sys.stdin
-        try:
-            mock_stdin = MagicMock()
-            mock_stdin.isatty.return_value = True
-            sys.stdin = mock_stdin
-            # yes=False, isatty=True → yes stays False
-            yes = False
-            if not yes and not sys.stdin.isatty():
-                yes = True
-            assert yes is False
-        finally:
-            sys.stdin = original
+        assert result.exit_code == 0, result.output
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +211,8 @@ class TestStartMine:
             patch("forgemem.cli.PLIST_PATH", server_plist),
             patch("forgemem.cli.MINER_PLIST_PATH", miner_plist),
             patch("forgemem.cli.LOG_PATH", log_path),
+            patch("forgemem.cli._register_mcp", return_value=False),
+            patch("forgemem.cli._auto_detect_and_generate_skills", return_value=None),
             patch("shutil.which", return_value="/usr/local/bin/forgemem"),
             patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")),
             patch("forgemem.core.DB_PATH", tmp_path / "forgemem.db"),
@@ -253,6 +241,8 @@ class TestStartMine:
             patch("forgemem.cli.PLIST_PATH", server_plist),
             patch("forgemem.cli.MINER_PLIST_PATH", miner_plist),
             patch("forgemem.cli.LOG_PATH", log_path),
+            patch("forgemem.cli._register_mcp", return_value=False),
+            patch("forgemem.cli._auto_detect_and_generate_skills", return_value=None),
             patch("shutil.which", return_value="/usr/local/bin/forgemem"),
             patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")),
             patch("forgemem.core.DB_PATH", tmp_path / "forgemem.db"),
@@ -276,6 +266,8 @@ class TestStartMine:
             patch("forgemem.cli.PLIST_PATH", server_plist),
             patch("forgemem.cli.MINER_PLIST_PATH", miner_plist),
             patch("forgemem.cli.LOG_PATH", log_path),
+            patch("forgemem.cli._register_mcp", return_value=False),
+            patch("forgemem.cli._auto_detect_and_generate_skills", return_value=None),
             patch("shutil.which", return_value="/usr/local/bin/forgemem"),
             patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")),
             patch("forgemem.core.DB_PATH", tmp_path / "forgemem.db"),
@@ -379,20 +371,6 @@ class TestStop:
 # ---------------------------------------------------------------------------
 
 class TestProviderGuard:
-    def test_init_exits_1_when_no_provider(self, tmp_path):
-        """forgemem init must exit with code 1 when no provider is configured (non-interactive)."""
-        with (
-            patch("forgemem.core.DB_PATH", tmp_path / "forgemem.db"),
-            patch("forgemem.cli._register_mcp", return_value=False),
-            patch("forgemem.cli._auto_detect_and_generate_skills", return_value=None),
-            patch("forgemem.config.detect_ollama", return_value=None),
-            patch("forgemem.config.load", return_value={}),
-            patch("forgemem.config.save", return_value=None),
-        ):
-            result = runner.invoke(app, ["init", "--yes"])
-        assert result.exit_code == 1, result.output
-        assert "ACTION REQUIRED" in result.output
-
     @pytest.mark.skipif(sys.platform != "darwin", reason="LaunchAgent is macOS only")
     def test_start_exits_1_when_no_provider(self):
         """forgemem start must exit with code 1 when no provider is configured."""
@@ -443,3 +421,68 @@ class TestVersionSync:
             f"forgemem.__version__ ({forgemem.__version__!r}). "
             "Bump pyproject.toml and reinstall with 'pip install -e .'."
         )
+
+
+# ---------------------------------------------------------------------------
+# Credits flag helpers + status panel
+# ---------------------------------------------------------------------------
+
+class TestCreditsFlag(unittest.TestCase):
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp()
+        self._tmp_flag = Path(self._tmpdir) / ".credits_exhausted"
+        self._patcher = patch("forgemem.config.CREDITS_FLAG_PATH", self._tmp_flag)
+        self._patcher.start()
+
+    def tearDown(self):
+        self._patcher.stop()
+        self._tmp_flag.unlink(missing_ok=True)
+
+    def test_set_and_get(self):
+        from forgemem.config import set_credits_flag, get_credits_flag
+        set_credits_flag(0.01)
+        result = get_credits_flag()
+        self.assertIsNotNone(result)
+        self.assertEqual(result["balance_usd"], 0.01)
+        self.assertIn("ts", result)
+
+    def test_clear(self):
+        from forgemem.config import set_credits_flag, clear_credits_flag, get_credits_flag
+        set_credits_flag(0.0)
+        clear_credits_flag()
+        self.assertIsNone(get_credits_flag())
+
+    def test_get_returns_none_when_absent(self):
+        from forgemem.config import get_credits_flag
+        self.assertIsNone(get_credits_flag())
+
+    def test_get_returns_none_on_corrupt_file(self):
+        self._tmp_flag.write_text("not valid json {{{")
+        from forgemem.config import get_credits_flag
+        self.assertIsNone(get_credits_flag())
+
+    def test_status_shows_panel_when_flag_set(self):
+        from forgemem.config import set_credits_flag
+        set_credits_flag(0.0)
+        # side_effect: first call (auto-init callback) returns True to skip init,
+        # second call (status DB check) returns False to trigger early exit cleanly.
+        with patch("forgemem.config.load", return_value={"provider": "forgemem"}), \
+             patch("forgemem.core.DB_PATH") as mock_db:
+            mock_db.exists.side_effect = [True, False]
+            result = runner.invoke(app, ["status"])
+        self.assertIn("ACTION REQUIRED", result.output)
+        self.assertIn("credits exhausted", result.output)
+
+    def test_status_no_panel_when_flag_absent(self):
+        with patch("forgemem.config.load", return_value={"provider": "forgemem"}), \
+             patch("forgemem.core.DB_PATH") as mock_db:
+            mock_db.exists.side_effect = [True, False]
+            result = runner.invoke(app, ["status"])
+        self.assertNotIn("ACTION REQUIRED", result.output)
+
+    def test_auth_login_clears_credits_flag(self):
+        from forgemem.config import set_credits_flag, get_credits_flag, clear_credits_flag
+        set_credits_flag(0.0)
+        self.assertIsNotNone(get_credits_flag())
+        clear_credits_flag()  # simulates what _do_auth_login calls
+        self.assertIsNone(get_credits_flag())
