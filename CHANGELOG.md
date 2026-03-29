@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.8] — 2026-03-28
+
+- Fix: `forgemem init` non-interactive (agent/piped) runs now show a prominent red `ACTION REQUIRED` panel when no inference provider is configured, listing all five provider options — previously a single yellow line was easily missed
+- Fix: `forgemem init` success panel now promotes provider setup to a required step 0 when provider is not yet configured, preventing users from proceeding with an unconfigured distillation backend
+
 ## [0.1.7] — 2026-03-28
 
 - Fix: eliminate version string duplication between `pyproject.toml` and `forgemem/__init__.py` — `__init__.py` now derives `__version__` from `importlib.metadata` at runtime, making `pyproject.toml` the single source of truth

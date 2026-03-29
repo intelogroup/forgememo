@@ -246,12 +246,20 @@ def _prompt_provider_setup(yes: bool) -> None:
             console.print(f"[green]Provider auto-set to {provider}[/] (detected {env_var})")
             return
 
-    # Non-interactive mode: warn and skip
+    # Non-interactive mode: warn visibly and skip
     if yes:
-        console.print(
-            "[yellow]No inference provider configured.[/] "
-            "Run [cyan]forgemem config anthropic --key sk-ant-...[/] to set one."
-        )
+        console.print(Panel(
+            "[bold yellow]Provider not configured — required before memories can be distilled.[/]\n\n"
+            "Run one of:\n"
+            "  [cyan]forgemem config anthropic --key sk-ant-...[/]\n"
+            "  [cyan]forgemem config openai    --key sk-...[/]\n"
+            "  [cyan]forgemem config gemini    --key AIza...[/]\n"
+            "  [cyan]forgemem config ollama[/]               [dim](local, free)[/]\n"
+            "  [cyan]forgemem config forgemem[/]             [dim](managed, no key needed)[/]",
+            title="[bold red]ACTION REQUIRED[/]",
+            border_style="red",
+            expand=False,
+        ))
         return
 
     # Interactive menu
@@ -360,22 +368,44 @@ def init(
     # Provider setup — runs only if still unconfigured (Ollama declined or not detected)
     _prompt_provider_setup(yes)
 
-    console.print(Panel(
-        "[bold green]Forgemem initialized successfully![/]\n\n"
-        "[bold]Next steps:[/]\n"
-        "  1. [cyan]forgemem start[/]          — launch the MCP server (background daemon)\n"
-        "  2. Restart Claude Code / your AI agent to pick up the MCP connection\n"
-        "  3. [cyan]forgemem status[/]         — verify everything is running\n\n"
-        "[bold]Key commands:[/]\n"
-        "  [cyan]forgemem store \"<text>\"[/]   — save a memory manually\n"
-        "  [cyan]forgemem search \"<query>\"[/] — search stored memories\n"
-        "  [cyan]forgemem mine[/]              — scan recent work and extract memories\n"
-        "  [cyan]forgemem distill[/]           — condense traces into lasting principles\n"
-        "  [cyan]forgemem config[/]            — set inference provider (anthropic/ollama/…)\n\n"
-        "Run [cyan]forgemem help[/] at any time to see this again.",
-        title="Forgemem Ready",
-        expand=False,
-    ))
+    provider_configured = fm_cfg.load().get("provider") is not None
+
+    if not provider_configured:
+        console.print(Panel(
+            "[bold green]Forgemem initialized successfully![/]\n\n"
+            "[bold red]⚠  REQUIRED BEFORE USE:[/]\n"
+            "  [cyan]forgemem config <provider> --key <key>[/]   ← do this first\n\n"
+            "[bold]Next steps:[/]\n"
+            "  1. [cyan]forgemem config anthropic --key sk-ant-...[/]  (or openai/gemini/ollama)\n"
+            "  2. [cyan]forgemem start[/]          — launch the MCP server (background daemon)\n"
+            "  3. Restart Claude Code / your AI agent to pick up the MCP connection\n"
+            "  4. [cyan]forgemem status[/]         — verify everything is running\n\n"
+            "[bold]Key commands:[/]\n"
+            "  [cyan]forgemem store \"<text>\"[/]   — save a memory manually\n"
+            "  [cyan]forgemem search \"<query>\"[/] — search stored memories\n"
+            "  [cyan]forgemem mine[/]              — scan recent work and extract memories\n"
+            "  [cyan]forgemem distill[/]           — condense traces into lasting principles\n\n"
+            "Run [cyan]forgemem help[/] at any time to see this again.",
+            title="Forgemem Ready",
+            expand=False,
+        ))
+    else:
+        console.print(Panel(
+            "[bold green]Forgemem initialized successfully![/]\n\n"
+            "[bold]Next steps:[/]\n"
+            "  1. [cyan]forgemem start[/]          — launch the MCP server (background daemon)\n"
+            "  2. Restart Claude Code / your AI agent to pick up the MCP connection\n"
+            "  3. [cyan]forgemem status[/]         — verify everything is running\n\n"
+            "[bold]Key commands:[/]\n"
+            "  [cyan]forgemem store \"<text>\"[/]   — save a memory manually\n"
+            "  [cyan]forgemem search \"<query>\"[/] — search stored memories\n"
+            "  [cyan]forgemem mine[/]              — scan recent work and extract memories\n"
+            "  [cyan]forgemem distill[/]           — condense traces into lasting principles\n"
+            "  [cyan]forgemem config[/]            — set inference provider (anthropic/ollama/…)\n\n"
+            "Run [cyan]forgemem help[/] at any time to see this again.",
+            title="Forgemem Ready",
+            expand=False,
+        ))
 
 
 @app.command()
