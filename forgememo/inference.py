@@ -176,7 +176,7 @@ def _call_forgemem_managed(prompt: str, max_tokens: int, model: str) -> str:
             timeout=30,
         )
     except req.exceptions.ConnectionError:
-        print("ERROR: Could not reach api.forgemem.com. Check your connection.", file=sys.stderr)
+        print("ERROR: Could not reach api.forgememo.com. Check your connection.", file=sys.stderr)
         sys.exit(1)
 
     if resp.status_code == 401:
@@ -186,7 +186,7 @@ def _call_forgemem_managed(prompt: str, max_tokens: int, model: str) -> str:
         balance = resp.json().get("balance_usd", "0.00")
         print(
             f"ERROR: Insufficient credits (balance: ${balance}).\n"
-            "  Add credits: https://app.forgemem.com/billing\n"
+            "  Add credits: https://app.forgememo.com/billing\n"
             "  Or switch to BYOK: forgemem config provider anthropic --key sk-ant-...",
             file=sys.stderr,
         )

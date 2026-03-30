@@ -32,7 +32,7 @@ If you want hosted service terms, SLAs, or enterprise support, we offer commerci
 To obtain a commercial license or discuss hosted/enterprise options:
 
 - GitHub: open an issue tagged `commercial` at https://github.com/intelogroup/forgemem/issues
-- Website: https://forgemem.com (coming soon)
+- Website: https://forgememo.com (coming soon)
 
 ## Donations
 

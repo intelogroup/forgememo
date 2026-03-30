@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "forgememo"
-version = "0.1.16"
+version = "0.1.17"
 description = "Persistent memory for AI agents — cross-session context that actually sticks"
 authors = [{name = "Forgemem Contributors"}]
 license = "Apache-2.0"

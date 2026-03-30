@@ -94,8 +94,8 @@ class InferenceResponse(BaseModel):
 
 class CheckoutRequest(BaseModel):
     pack_id: str = "starter"
-    success_url: str = "https://app.forgemem.com/billing/success"
-    cancel_url: str = "https://app.forgemem.com/billing"
+    success_url: str = "https://app.forgememo.com/billing/success"
+    cancel_url: str = "https://app.forgememo.com/billing"
 
 
 class SyncPushRequest(BaseModel):
