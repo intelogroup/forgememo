@@ -3,9 +3,8 @@ services:
     type: web
     repo: https://github.com/intelogroup/forgememo
     region: oregon
-    rootDir: server
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    buildCommand: cd server && pip install -r requirements.txt
+    startCommand: cd server && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
         sync: false
@@ -21,3 +20,19 @@ services:
         sync: false
       - key: WEBAPP_ORIGIN
         value: https://forgememo.com
+      - key: API_BASE_URL
+        value: https://forgememo-server.onrender.com
+      - key: STRIPE_PRICE_STARTER
+        sync: false
+      - key: STRIPE_PRICE_PRO
+        sync: false
+      - key: STRIPE_PRICE_TEAM
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
