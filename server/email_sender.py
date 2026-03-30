@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 import httpx
 
 RESEND_API_KEY  = os.environ.get("RESEND_API_KEY", "")
-FROM_ADDRESS    = "Forgemem <onboarding@resend.dev>"
+FROM_ADDRESS    = "Forgememo <noreply@forgememo.com>"
 
 # Dev SMTP settings — defaults to Mailpit (http://localhost:8025)
 DEV_SMTP_HOST = os.environ.get("DEV_SMTP_HOST", "127.0.0.1")
@@ -32,12 +32,12 @@ def send_magic_link(to: str, magic_url: str) -> None:
     """Send a magic link email. Tries Resend first; falls back to Mailpit SMTP on any failure."""
     import logging
     html = f"""
-    <p>Click the link below to sign in to Forgemem. This link expires in 10 minutes.</p>
-    <p><a href="{magic_url}" style="font-size:16px;font-weight:bold">Sign in to Forgemem</a></p>
+    <p>Click the link below to sign in to Forgememo. This link expires in 10 minutes.</p>
+    <p><a href="{magic_url}" style="font-size:16px;font-weight:bold">Sign in to Forgememo</a></p>
     <p>Or copy this URL:<br><code>{magic_url}</code></p>
     <p style="color:#888;font-size:12px">If you didn't request this, ignore this email.</p>
     """
-    subject = "Your Forgemem sign-in link"
+    subject = "Your Forgememo sign-in link"
 
     if RESEND_API_KEY:
         try:
