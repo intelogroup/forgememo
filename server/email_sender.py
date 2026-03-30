@@ -47,10 +47,19 @@ def send_magic_link(to: str, magic_url: str) -> None:
                 json={"from": FROM_ADDRESS, "to": [to], "subject": subject, "html": html},
                 timeout=10,
             )
-            if resp.status_code == 200:
+            if resp.status_code in (200, 201):
                 return
-            logging.warning("Resend failed (%s): %s — falling back to Mailpit", resp.status_code, resp.text[:120])
+            logging.warning("Resend failed (%s): %s", resp.status_code, resp.text[:200])
+            raise RuntimeError(f"Email delivery failed (Resend {resp.status_code}): {resp.text[:120]}")
+        except RuntimeError:
+            raise
         except Exception as exc:
-            logging.warning("Resend error: %s — falling back to Mailpit", exc)
+            logging.warning("Resend error: %s", exc)
+            raise RuntimeError(f"Email delivery failed: {exc}") from exc
 
-    _send_via_smtp(to, subject, html)
+    # Dev-only SMTP fallback (Mailpit) — only runs when RESEND_API_KEY is not set
+    try:
+        _send_via_smtp(to, subject, html)
+    except Exception as exc:
+        logging.warning("SMTP fallback failed: %s", exc)
+        raise RuntimeError(f"Email delivery failed (SMTP): {exc}") from exc
