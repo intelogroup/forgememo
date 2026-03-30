@@ -4,7 +4,9 @@
 .env.*
 !.env.example
 *.pem
-=2.0.0
+*.tok
+*.token
+*.tokens
 
 # Python
 __pycache__/
@@ -36,3 +38,25 @@ daily_scan.log
 # Worktrees
 .worktrees/
 .superpowers/
+
+# Junk / scratch
+=*
+*.bak
+node_modules/
+e2e/node_modules/
+
+# Tests (internal)
+test_*.py
+tests/
+server/tests/
+
+# Webapp (not public yet)
+webapp/
+
+# Internal docs
+docs/
+plan.md
+
+# Internal server (managed service — not for public)
+server/
+setup_api.sh

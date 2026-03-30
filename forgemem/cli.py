@@ -860,7 +860,11 @@ def _do_auth_login() -> bool:
         def log_message(self, *args):  # silence request logs
             pass
 
-    server = http.server.HTTPServer(("127.0.0.1", port), _Handler)
+    try:
+        server = http.server.HTTPServer(("127.0.0.1", port), _Handler)
+    except OSError:
+        console.print(f"[red]error:[/] port {port} is already in use. Stop the process using it and try again.")
+        raise typer.Exit(1)
 
     def _serve():
         server.handle_request()  # handle one request then stop
@@ -868,7 +872,7 @@ def _do_auth_login() -> bool:
     t = threading.Thread(target=_serve, daemon=True)
     t.start()
 
-    _api_base = os.environ.get("FORGEMEM_API_URL", "https://app.forgemem.com")
+    _api_base = os.environ.get("FORGEMEM_API_URL", "https://api.forgemem.com")
     login_url = (
         f"{_api_base}/cli-auth"
         f"?callback=http://127.0.0.1:{port}/callback"
