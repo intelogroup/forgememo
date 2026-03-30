@@ -282,8 +282,8 @@ async def billing_cli_setup(
 
     cli_callback_encoded = _urlparse.quote(cli_callback, safe="")
     return templates.TemplateResponse(
-        "billing_cli_setup.html",
-        {"request": request, "cli_callback_encoded": cli_callback_encoded, "state": state},
+        request, "billing_cli_setup.html",
+        {"cli_callback_encoded": cli_callback_encoded, "state": state},
     )
 
 
@@ -436,8 +436,8 @@ async def cli_auth_landing(request: Request):
     state    = request.query_params.get("state", "")
     _validate_cli_callback(callback)
     return templates.TemplateResponse(
-        "cli_auth.html",
-        {"request": request, "callback": callback, "state": state},
+        request, "cli_auth.html",
+        {"callback": callback, "state": state},
     )
 
 
