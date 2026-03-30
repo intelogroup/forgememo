@@ -47,6 +47,33 @@ ForgeMem is a persistent long-term memory system for AI coding agents. It mines 
 
 The **only durable position** is as the **cross-agent memory layer** — the Switzerland that works across all AI coding tools.
 
+### Competitive Update: Claude Code Auto-Memory (Feb 2026)
+
+Since February 2026, Claude Code auto-writes `MEMORY.md` under `~/.claude/projects/<project>/memory/` — accumulating debugging insights, naming corrections, workflow preferences. Users can audit it with `/memory` and prune noise. It can be disabled with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`.
+
+**This validates the market but does NOT kill ForgeMem.** Here's the gap:
+
+| Feature | Claude Code MEMORY.md | ForgeMem |
+|---------|----------------------|----------|
+| Storage | Flat markdown file per project | Structured DB with FTS5, impact scoring, tags |
+| Search | Agent reads entire file (brute force) | FTS5 search with project/type/impact filters |
+| Cross-project | No — siloed per project | Yes — search across all projects |
+| Cross-agent | Claude Code only | Claude + Copilot + Gemini + Codex |
+| Auto-mining | Session notes only | Git history + session files + manual |
+| Curation | Manual (`/memory` + prune weekly) | Automatic LLM distillation with impact scores |
+| Sharing | Local file only | Cloud sync (opt-in) across devices |
+| Quality control | Accumulates noise ("context liability") | Ranked principles, deduplicated, scored 1-10 |
+
+The Claude Code blog itself calls uncurated MEMORY.md a **"context liability"** — that's literally what ForgeMem solves.
+
+**Updated ForgeMem pitch:**
+
+> "Claude Code writes MEMORY.md but it becomes a junk drawer you have to curate weekly. ForgeMem auto-mines your git history, distills actionable principles, ranks them by impact, and serves them across ALL your agents — not just Claude. Cross-project, cross-device, cross-agent."
+
+**Strategic takeaway:** Claude Code built a flat file. ForgeMem should position as the **structured, searchable, cross-agent upgrade** to MEMORY.md. In fact, ForgeMem already mines MEMORY.md files as a data source (`daily_scan.py` scans `~/.claude/projects/*/memory/*.md`). The pitch becomes: "ForgeMem reads your Claude memory files, distills the best parts, and makes them available to all your agents."
+
+**Revised threat assessment:** Claude Code's MEMORY.md is a weaker implementation than originally feared. The real threat is if Anthropic adds semantic search + cross-project querying to MEMORY.md. Monitor Claude Code changelogs for this. As long as MEMORY.md stays as flat files, ForgeMem has a clear upgrade path.
+
 ---
 
 ## To Build a Real Moat
