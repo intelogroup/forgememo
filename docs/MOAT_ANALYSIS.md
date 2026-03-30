@@ -510,3 +510,319 @@ The four items above form a **connected stack** that, built together, would crea
 2. **Cross-device sync** — already built, but useless without frictionless auth. Once OAuth ships, promote sync as a killer feature.
 3. **Cloud-scheduled inference** — with auth + sync in place, this becomes the paid tier differentiator.
 4. **White-label model** — longer-term proprietary moat. Ship after the cloud layer is generating revenue. (Note: this is emphasized in external communications because it's the most technically novel initiative and best illustrates long-term differentiation, even though OAuth/sync are tactical prerequisites that ship first.)
+
+---
+
+## Modern CLI + Agent-Native Design: Top Changes and Additions
+
+Based on current best practices from leading developer CLIs (uv, gh, Vercel CLI, Supabase CLI, Charm.sh ecosystem) and the emerging agent-CLI paradigm (Claude Code, Copilot CLI, Codex), here are the top changes that would make ForgeMem both a better human CLI **and** a better agent tool.
+
+### The Paradigm Shift: Agents Are Your Primary Users Now
+
+The 2025 Stack Overflow survey shows 78% of developers spend over half their day in a terminal (up from 62% in 2023). Every major AI coding assistant (Claude Code, Copilot CLI, Cursor terminal, Codex) operates through the command line. ForgeMem already ships an MCP server, which puts it ahead of most tools. But the CLI itself was designed for humans first, agents second.
+
+**The paradigm flip:** In the agent era, your MCP tools are the primary interface. The human CLI is the secondary interface. Most ForgeMem interactions will come from agents calling `retrieve_memories` and `save_trace` — not humans typing `forgemem search`. Design accordingly.
+
+---
+
+### TOP 10 CHANGES (Ranked by Impact)
+
+#### 1. Add `--json` Flag to Every Command (Agent-Readable Output)
+
+**Current state:** CLI outputs Rich-formatted markdown with colors, panels, and tables. Great for humans, unusable for agents or scripts.
+
+**What modern CLIs do:** `gh` (GitHub CLI), `kubectl`, `uv`, and `supabase` all support `--json` flags that output structured JSON. This is now table stakes.
+
+**What to change:**
+```bash
+# Today: human-only output
+forgemem search "caching"
+> Principle: Use Redis for session caching (impact: 8)
+
+# Should also support:
+forgemem search "caching" --json
+{"principles": [{"id": 42, "principle": "Use Redis...", "impact_score": 8, "tags": ["redis","performance"]}]}
+
+forgemem stats --json
+{"traces": 156, "principles": 42, "undistilled": 12, "top_projects": ["api", "frontend"]}
+```
+
+**Why it matters:**
+- Agents calling ForgeMem via subprocess (not MCP) can parse structured output
+- CI/CD pipelines can consume ForgeMem data
+- Other tools can build on top of ForgeMem
+- Pattern from `gh`: `gh pr list --json number,title,author` lets callers pick fields
+
+**Implementation:** Add a `--json` / `--format json` flag to `search`, `stats`, `list`, `save`. In `cli.py`, check the flag and call `json.dumps()` instead of Rich formatting.
+
+#### 2. Richer MCP Tool Descriptions with Usage Examples
+
+**Current state:** MCP tools have functional docstrings but lack examples and edge-case guidance. When an agent reads the tool description, it has to guess the right parameters.
+
+**What good MCP tools do:** Include usage examples, common patterns, and "when to use this vs. that" guidance directly in the tool description. The agent's only context for knowing how to use a tool is the description string.
+
+**What to change in `mcp_server.py`:**
+```python
+# Before:
+@mcp.tool()
+def retrieve_memories(query: str, k: int = 5, project: str | None = None, type: str | None = None) -> str:
+    """Search the memory database for relevant principles and traces."""
+
+# After:
+@mcp.tool()
+def retrieve_memories(query: str, k: int = 5, project: str | None = None, type: str | None = None) -> str:
+    """Search ForgeMem for principles and traces matching a query.
+
+    WHEN TO USE: Call this BEFORE starting any task to check for prior
+    learnings. Also call when you encounter an error to see if it's been
+    solved before.
+
+    EXAMPLES:
+    - retrieve_memories("database connection pooling") → find caching/DB tips
+    - retrieve_memories("CI failures", project="api") → project-scoped search
+    - retrieve_memories("Next.js hydration", type="failure") → past failures only
+
+    TIPS:
+    - Use specific technical terms, not vague queries
+    - Combine with project filter for focused results
+    - Results ranked by impact_score (higher = more important lesson)
+    """
+```
+
+**Why it matters:** Anthropic's tool use documentation explicitly recommends detailed descriptions with examples. Agents perform significantly better when tool descriptions include "when to use" guidance and concrete examples. This is the single highest-ROI change for agent UX.
+
+#### 3. Add a `forgemem doctor` Command (Self-Diagnosis)
+
+**Current state:** When things break, users get cryptic errors. No way to check if the setup is healthy.
+
+**What modern CLIs do:** `supabase doctor`, `brew doctor`, `flutter doctor`, `npx next info` — they all have diagnostic commands that check the environment and report issues.
+
+**What to build:**
+```bash
+forgemem doctor
+
+ForgeMem Health Check
+=====================
+[ok] Python 3.12.1
+[ok] SQLite DB exists (~/.forgemem/forgemem_memory.db, 2.4 MB)
+[ok] FTS5 indexes intact (traces_fts: 156 rows, principles_fts: 42 rows)
+[ok] Provider: anthropic (API key set)
+[ok] MCP server registered in ~/.claude/settings.json
+[!!] LaunchAgent not loaded (run: forgemem start)
+[!!] 12 undistilled traces (run: forgemem distill)
+[ok] Last sync: 2 hours ago
+[--] Cloud mining: not configured (requires forgemem provider)
+[ok] Disk space: 45 GB free
+```
+
+**Why it matters:**
+- Reduces support burden (users self-diagnose)
+- Catches misconfigurations before they cause silent failures
+- Shows the "upgrade path" (e.g., "cloud mining: not configured" nudges toward forgemem provider)
+
+#### 4. Completions and Shell Integration
+
+**Current state:** No shell completions. Users must memorize commands and flags.
+
+**What modern CLIs do:** `gh`, `uv`, `kubectl` all ship shell completions. Typer has built-in support via `typer.main.get_command()`.
+
+**What to add:**
+```bash
+# One command to install completions
+forgemem completions install
+
+# Or manual:
+forgemem completions bash >> ~/.bashrc
+forgemem completions zsh >> ~/.zshrc
+forgemem completions fish >> ~/.config/fish/completions/forgemem.fish
+```
+
+Typer already supports this via `typer.main.get_command()` — it's nearly free to add.
+
+#### 5. Add `forgemem context` — Pre-Task Memory Dump for Agents
+
+**Current state:** Agents must know to call `retrieve_memories` with the right query. If they don't, they start from zero.
+
+**What to build:** A single MCP tool that returns a curated context package — the "top N things you should know" about this project.
+
+```python
+@mcp.tool()
+def forgemem_context(project: str | None = None) -> str:
+    """Get a curated summary of the most important principles for the current project.
+
+    WHEN TO USE: Call this ONCE at the start of every coding session.
+    Returns the top 10 highest-impact principles for the project,
+    plus any recent failures to watch out for.
+
+    Unlike retrieve_memories (which requires a specific query), this gives
+    you a broad overview without knowing what to search for.
+    """
+```
+
+**Why it matters:**
+- Agents don't always know what to search for at session start
+- A broad "what should I know?" tool is more natural than targeted search
+- Claude Code's CLAUDE.md serves a similar purpose — this is the dynamic version
+- Could be auto-injected via a hook or skill file instruction
+
+#### 6. Separate Required from Optional Dependencies
+
+**Current state:** `anthropic>=0.28.0` is a hard dependency in `pyproject.toml` even though users may pick OpenAI, Gemini, or Ollama. Every install pulls in the Anthropic SDK.
+
+**What modern CLIs do:** Use optional dependency groups (extras):
+```toml
+[project]
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+    "questionary>=2.0.0",
+    "requests>=2.31.0",
+    "fastmcp>=2.0.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.28.0"]
+openai = ["openai>=1.0.0"]
+gemini = ["google-generativeai>=0.5.0"]
+all = ["anthropic>=0.28.0", "openai>=1.0.0", "google-generativeai>=0.5.0"]
+```
+
+```bash
+pip install forgemem              # Minimal: just CLI + MCP + Ollama support
+pip install forgemem[anthropic]   # With Anthropic SDK
+pip install forgemem[all]         # Everything
+```
+
+**Why it matters:**
+- Faster installs (especially for Ollama-only users)
+- Smaller dependency footprint (fewer security vulnerabilities)
+- Follows `uv` and modern Python packaging conventions
+
+#### 7. Migrate from Dual CLI to Pure Typer
+
+**Current state:** Two CLI systems coexist — Typer in `cli.py` wraps argparse in `core.py`. `cli.py` creates `argparse.Namespace` objects to call `core.py` functions:
+```python
+ns = argparse.Namespace(type=trace_type, content=content, ...)
+core.cmd_save(ns)
+```
+
+**What to change:** Refactor `core.py` to export plain functions that take keyword arguments, not argparse Namespaces. Then `cli.py` calls them directly:
+```python
+# Before:
+ns = argparse.Namespace(type=trace_type, content=content, project=project)
+core.cmd_save(ns)
+
+# After:
+core.save_trace(type=trace_type, content=content, project=project)
+```
+
+**Why it matters:**
+- Removes the argparse dependency and indirection
+- Makes `core.py` functions reusable as a Python library (not just CLI)
+- The MCP server can call the same functions directly
+- Cleaner testing (pass kwargs, not Namespace objects)
+
+#### 8. Add Homebrew Tap for macOS Distribution
+
+**Current state:** `pip install forgemem` only. Requires Python knowledge and pip/pipx.
+
+**What modern CLIs do:** Ship via Homebrew (macOS), apt (Debian), and standalone binaries.
+
+**What to add:**
+```bash
+# Homebrew tap (easiest to set up):
+brew tap intelogroup/forgemem
+brew install forgemem
+
+# Or via pipx (already works, just needs documentation):
+pipx install forgemem
+
+# Or via uv tool:
+uv tool install forgemem
+```
+
+A Homebrew tap is a GitHub repo (`homebrew-forgemem`) with a Formula file. Takes ~30 minutes to set up and dramatically lowers the install barrier for macOS users.
+
+**Why it matters:**
+- `pip install` feels like a Python library, not a tool
+- Homebrew/pipx/uv tool installs feel like installing a real CLI tool
+- `brew install forgemem && forgemem init` is a better first impression than `pip install forgemem`
+
+#### 9. Add `NO_COLOR`, `FORCE_COLOR`, and `--quiet` Support
+
+**Current state:** Rich output always on. No way to disable colors or suppress output.
+
+**What the standard says:** The [NO_COLOR](https://no-color.org/) convention and [clig.dev](https://clig.dev/) guidelines require:
+- Respect `NO_COLOR` env var (disable all ANSI codes)
+- Respect `FORCE_COLOR` env var (force colors even in pipes)
+- Provide `--quiet` / `-q` flag (suppress non-essential output)
+- Detect non-TTY (pipe) and auto-disable colors/spinners
+
+**What to add:**
+```python
+# In cli.py:
+import os
+
+def _make_console() -> Console:
+    no_color = os.environ.get("NO_COLOR") is not None
+    force_color = os.environ.get("FORCE_COLOR") is not None
+    return Console(
+        no_color=no_color,
+        force_style=force_color,
+    )
+```
+
+**Why it matters:**
+- CI/CD environments set `NO_COLOR` — Rich markup in log files is unreadable
+- Agents may capture stdout — ANSI escape codes corrupt their context
+- `--quiet` is essential for scripting (`forgemem save ... --quiet && echo "saved"`)
+
+#### 10. Add Webhooks for Agent Orchestration
+
+**Current state:** The local Flask API (`forgemem/api.py`) has webhook support, but the MCP server doesn't emit events and there's no way for an agent to say "tell me when a new principle is saved."
+
+**What to build:** Event hooks that let agents react to ForgeMem activity:
+
+```python
+# In mcp_server.py, after saving a trace:
+@mcp.tool()
+def save_trace(...) -> str:
+    # ... save logic ...
+    # Emit event for any listening agents/webhooks
+    _emit_event("trace_saved", {"trace_id": trace_id, "project": project, "type": trace_type})
+```
+
+More practically, add a `forgemem watch` command:
+```bash
+# Stream new principles as they're mined (useful for CI/agents):
+forgemem watch --json
+{"event": "principle_saved", "id": 43, "principle": "...", "impact_score": 8, "ts": "..."}
+{"event": "principle_saved", "id": 44, "principle": "...", "impact_score": 6, "ts": "..."}
+```
+
+**Why it matters:**
+- Enables multi-agent workflows (agent A mines, agent B acts on new principles)
+- CI/CD integration (trigger actions on high-impact learnings)
+- Real-time dashboards in the webapp
+
+---
+
+### QUICK WINS (Ship This Week)
+
+| Change | Effort | Impact |
+|--------|--------|--------|
+| `--json` flag on `search` and `stats` | 2 hours | High — unlocks scripting + agent subprocess use |
+| Richer MCP tool descriptions with examples | 1 hour | High — immediate agent UX improvement |
+| `NO_COLOR` + `--quiet` support | 1 hour | Medium — CI/CD and pipe compatibility |
+| Shell completions via Typer | 30 min | Medium — developer UX polish |
+| `forgemem doctor` | 3 hours | Medium — reduces support burden |
+
+### MEDIUM TERM (Ship This Month)
+
+| Change | Effort | Impact |
+|--------|--------|--------|
+| `forgemem context` MCP tool | 4 hours | High — best agent UX improvement |
+| Optional dependency groups | 2 hours | Medium — cleaner installs |
+| Homebrew tap | 2 hours | Medium — lowers install barrier |
+| Migrate core.py from argparse to kwargs | 1 day | Medium — enables library use |
+| `forgemem watch --json` | 4 hours | Medium — enables multi-agent workflows |
