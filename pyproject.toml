@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "forgemem"
-version = "0.1.12"
+version = "0.1.13"
 description = "Persistent memory for AI agents — cross-session context that actually sticks"
 authors = [{name = "Forgemem Contributors"}]
 license = "Apache-2.0"
@@ -34,8 +34,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/kalinovdameus/forgemem"
-Documentation = "https://github.com/kalinovdameus/forgemem#readme"
+Homepage = "https://github.com/intelogroup/forgemem"
+Documentation = "https://github.com/intelogroup/forgemem#readme"
 "Bug Tracker" = "https://github.com/intelogroup/forgemem/issues"
 
 [project.scripts]
@@ -49,4 +49,18 @@ forgemem = ["skills/*.md", "skills/*.json"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-exclude = ["server*"]
+exclude = [
+    "server*",
+    "webapp*",
+    "tests*",
+    "e2e*",
+    "docs*",
+    "forgemem.tests*",
+    ".*",
+    "*.sh",
+    "*.pem",
+    "*.key",
+    ".env*",
+    "*secrets*",
+    "md_scan_hashes.json"
+]

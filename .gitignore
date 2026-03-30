@@ -4,9 +4,11 @@
 .env.*
 !.env.example
 *.pem
+*.key
 *.tok
 *.token
 *.tokens
+*secrets*
 
 # Python
 __pycache__/
@@ -43,7 +45,7 @@ daily_scan.log
 =*
 *.bak
 node_modules/
-e2e/node_modules/
+e2e/
 
 # Tests (internal)
 test_*.py
@@ -60,3 +62,4 @@ plan.md
 # Internal server (managed service — not for public)
 server/
 setup_api.sh
+.gstack/

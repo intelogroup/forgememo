@@ -86,8 +86,9 @@ class DBPool:
                 pass
 
 
-# Initialize global pool
+# Initialize global pool and write serialization lock
 pool = None
+_write_lock = threading.Lock()
 
 
 def init_pool():
@@ -96,19 +97,32 @@ def init_pool():
     pool = DBPool(DB_PATH, pool_size=POOL_SIZE)
 
 
-def get_db():
-    """Context manager for acquiring a connection."""
+def get_db(write=False):
+    """Context manager for acquiring a connection.
+
+    Pass write=True for any INSERT/UPDATE/DELETE to serialize writes and
+    prevent SQLite lock contention on concurrent requests.
+    """
     class DBContext:
         def __enter__(self):
             if pool is None:
                 raise RuntimeError("Pool not initialized. Call init_pool() first.")
+            if write:
+                _write_lock.acquire()
             self.conn = pool.get_conn()
             return self.conn
-        
+
         def __exit__(self, exc_type, exc_val, exc_tb):
+            if exc_type is not None:
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
             if pool is not None:
                 pool.return_conn(self.conn)
-    
+            if write:
+                _write_lock.release()
+
     return DBContext()
 
 
@@ -250,7 +264,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_queue_retry ON webhook_queue(next_retry_a
 
 def init_db():
     """Initialize database schema (idempotent)."""
-    with get_db() as conn:
+    with get_db(write=True) as conn:
         # Check schema version
         cur = conn.execute("PRAGMA user_version")
         current_version = cur.fetchone()[0]
@@ -496,7 +510,7 @@ def create_app():
             score = 5
         
         try:
-            with get_db() as conn:
+            with get_db(write=True) as conn:
                 # Insert trace
                 cur = conn.execute(
                     "INSERT INTO traces (session_id, project_tag, type, content) VALUES (?, ?, ?, ?)",
@@ -777,7 +791,7 @@ def create_app():
             min_impact_score = 0
         
         try:
-            with get_db() as conn:
+            with get_db(write=True) as conn:
                 cur = conn.execute(
                     "INSERT INTO webhooks (url, api_key, project_filter, type_filter, min_impact_score) "
                     "VALUES (?, ?, ?, ?, ?)",
@@ -873,7 +887,7 @@ def dispatch_webhooks(trace_id, project, trace_type, impact_score):
 def enqueue_webhook_delivery(trace_id, webhook_id, trace):
     """Enqueue a webhook for delivery."""
     try:
-        with get_db() as conn:
+        with get_db(write=True) as conn:
             payload = json.dumps({
                 "event": "trace_saved",
                 "trace_id": trace['id'],
@@ -900,7 +914,7 @@ def webhook_retry_worker():
         try:
             time.sleep(WEBHOOK_RETRY_INTERVAL)
             
-            with get_db() as conn:
+            with get_db(write=True) as conn:
                 pending = conn.execute(
                     "SELECT id, webhook_id, trace_id, retry_count, payload "
                     "FROM webhook_queue "
@@ -917,7 +931,7 @@ def webhook_retry_worker():
 def attempt_webhook_delivery(queue_entry, conn=None):
     """Attempt to deliver a webhook."""
     if conn is None:
-        with get_db() as conn_inner:
+        with get_db(write=True) as conn_inner:
             _attempt_webhook_delivery_impl(queue_entry, conn_inner)
     else:
         _attempt_webhook_delivery_impl(queue_entry, conn)

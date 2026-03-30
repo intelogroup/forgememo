@@ -28,6 +28,8 @@ for i in $(seq 1 20); do
   sleep 5
 done
 
+sleep 3  # allow OCI to fully provision the session key before SSH
+
 if [ "$STATE" != "ACTIVE" ]; then
   echo "ERROR: Session did not become ACTIVE in time."
   exit 1
