@@ -480,13 +480,22 @@ The inference endpoint checks balance, then runs inference, then deducts credits
 
 > Question for team: Is `stripe_events.event_id` a UNIQUE constraint? If not, add one immediately.
 
-**3. Magic link token reuse (`server/db.py:310-321`)**
-Same TOCTOU pattern: SELECT `used=0`, then UPDATE `used=1`. Two requests with the same token can both succeed. Fix: `UPDATE magic_link_tokens SET used=1 WHERE token=? AND used=0` and check `rowcount == 1`.
+**3. Magic link token — defensive SQL improvement (`server/db.py:310-321`)** *(LOW)*
+`consume_magic_link_token()` uses `SELECT ... WHERE used=0` then `UPDATE SET used=1`. Tokens are effectively single-use because the SELECT filters on `used=0` — a second request returns `None`. Under SQLite's serialized writes this is not exploitable in practice. However, as a defensive SQL best practice, the UPDATE could include the `AND used=0` predicate and check `rowcount == 1` to make it atomic even on MySQL with concurrent connections:
+```python
+# Defensive: atomic single-use even under MySQL concurrency
+self._exec(conn, self._q("UPDATE magic_link_tokens SET used=1 WHERE token=? AND used=0"), (token,))
+if cursor.rowcount != 1:
+    return None  # already consumed
+```
 
-> Question for team: Have you tested this with concurrent requests? A simple curl loop will reproduce it.
-
-**4. JWT secret fails silently (`server/auth.py:10-18`)**
-`FORGEMEM_JWT_SECRET` defaults to empty string. The app only raises RuntimeError when `_secret()` is first called, not at startup. If the env var isn't set in production, the server starts fine but fails on first auth request. Fix: validate at startup (`if not JWT_SECRET: sys.exit("...")`).
+**4. JWT secret validation at startup (`server/auth.py:10-18`)** *(LOW)*
+`_secret()` correctly raises `RuntimeError("FORGEMEM_JWT_SECRET env var required")` when the env var is missing — this does NOT fail silently. However, the error only surfaces on the first auth request rather than at server startup. For faster feedback in production, consider validating at startup:
+```python
+# In server/main.py or server/auth.py module level
+if not os.environ.get("FORGEMEM_JWT_SECRET"):
+    sys.exit("FORGEMEM_JWT_SECRET env var required — server cannot start without it")
+```
 
 **5. Floating-point currency math (`server/main.py:122`, `server/db.py:256`)**
 `balance_usd` is a float. After thousands of transactions, rounding errors accumulate. Use `Decimal` or store as integer cents.
@@ -1446,7 +1455,7 @@ Don't retry on 401, 402, 404 — those are permanent failures.
 **Gap:** If user reinstalls AND deletes `~/.forgemem/` (clean slate), running `forgemem init` starts fresh. If they previously had a forgemem account, they need to `forgemem auth login` again — but there's no prompt telling them this.
 
 **Fix:** During `forgemem init`, after provider selection, if user picks "forgemem":
-```
+```text
 Looks like you've selected the forgemem provider.
 Do you have an existing account?
 > Yes — log me in (opens browser)
@@ -1461,12 +1470,12 @@ Both paths go through the same OAuth/magic link flow, but the UX acknowledges re
 **This actually works correctly** — magic link is idempotent by design. Same email = same account. But the UX doesn't communicate this.
 
 **Fix:** After successful auth, show:
-```
+```text
 Welcome back, user@email.com!
 Balance: $4.82  ·  Traces synced: 156
 ```
 vs for new users:
-```
+```text
 Account created! Welcome to ForgeMem.
 Your $5 free credits are ready.
 ```
@@ -1486,7 +1495,7 @@ if balance < 1.0 and balance > 0:
 ```
 
 Also add to `forgemem status`:
-```
+```text
 Credits: $0.82 ⚠️ LOW — estimated 41 mining runs remaining
          Add credits → https://app.forgemem.com/billing
 ```
@@ -1597,7 +1606,7 @@ def billing_link(user_id: str):
 
 **Recommended additions to webapp:**
 
-```
+```text
 Dashboard:
 ┌─────────────────────────────────────────┐
 │ Balance: $4.82         Burn rate: $0.48/day
