@@ -375,6 +375,115 @@ Each step increases value AND switching cost. That's the moat.
 
 ---
 
+## Code Audit: Gotchas and Technical Questions for the Team
+
+After a thorough read of the actual source code, here are the issues the team should address before scaling to paid users. Grouped by severity.
+
+### CRITICAL (Fix Before Accepting Payments)
+
+**1. Double-spend on credit deduction (`server/main.py:147-181`, `server/db.py:251-261`)**
+The inference endpoint checks balance, then runs inference, then deducts credits in separate transactions. Two concurrent requests can both pass the balance check and deduct, leaving the user with negative balance. Use `BEGIN IMMEDIATE` (SQLite) or `SELECT ... FOR UPDATE` (MySQL) to make check-and-deduct atomic.
+
+> Question for team: Are you seeing negative balances in production? Even with low traffic this will happen eventually.
+
+**2. Stripe webhook replay / double-credit (`server/main.py:205-223`)**
+`stripe_event_seen()` does a SELECT then INSERT in separate statements. Two simultaneous webhook deliveries (Stripe retries) can both pass the check and credit the user twice. Fix: use `INSERT ... ON CONFLICT DO NOTHING` and check the affected row count, or add a UNIQUE constraint on `event_id` (may already exist but not enforced atomically).
+
+> Question for team: Is `stripe_events.event_id` a UNIQUE constraint? If not, add one immediately.
+
+**3. Magic link token reuse (`server/db.py:310-321`)**
+Same TOCTOU pattern: SELECT `used=0`, then UPDATE `used=1`. Two requests with the same token can both succeed. Fix: `UPDATE magic_link_tokens SET used=1 WHERE token=? AND used=0` and check `rowcount == 1`.
+
+> Question for team: Have you tested this with concurrent requests? A simple curl loop will reproduce it.
+
+**4. JWT secret fails silently (`server/auth.py:10-18`)**
+`FORGEMEM_JWT_SECRET` defaults to empty string. The app only raises RuntimeError when `_secret()` is first called, not at startup. If the env var isn't set in production, the server starts fine but fails on first auth request. Fix: validate at startup (`if not JWT_SECRET: sys.exit("...")`).
+
+**5. Floating-point currency math (`server/main.py:122`, `server/db.py:256`)**
+`balance_usd` is a float. After thousands of transactions, rounding errors accumulate. Use `Decimal` or store as integer cents.
+
+> Question for team: What type is `balance_usd` in MySQL? If it's FLOAT, change to DECIMAL(10,4).
+
+### HIGH (Fix Before Public Launch)
+
+**6. No rate limiting on magic link endpoints (`server/main.py:271-289, 375-401`)**
+`/cli-auth/send-link` and `/webapp-auth/send-link` have zero rate limiting. An attacker can spam magic links to any email, exhausting your Resend quota and harassing users. Add per-email (3/hour) and per-IP (10/minute) limits.
+
+**7. No request size limits on FastAPI**
+No `max_request_size` configured. An attacker can POST gigabytes to `/v1/sync/push` and OOM the server. Add middleware: `app.add_middleware(RequestSizeLimitMiddleware, max_size=10_000_000)`.
+
+**8. Unbounded sync responses (`server/main.py:251-264`)**
+`/v1/sync/pull` returns ALL traces since `since=0` with no pagination. A user with 100K traces will get a multi-megabyte JSON response. Add `limit` and `offset` parameters, cap at 1000 per request.
+
+**9. CORS is too permissive (`server/main.py:39-46`)**
+`allow_methods=["*"]` and `allow_headers=["*"]` should be explicit lists. Change to `allow_methods=["GET", "POST", "OPTIONS"]`.
+
+**10. API keys stored in plaintext (`~/.forgemem/config.json`)**
+API keys for Anthropic/OpenAI/Gemini are stored unencrypted on disk. Anyone with filesystem access can read them. Consider using OS keychain (`keyring` library) or at minimum warn users.
+
+> Question for team: Is this documented? Do users know their keys are in a plain JSON file?
+
+**11. Git hooks can execute during scanning (`daily_scan.py`)**
+When `daily_scan.py` runs `git log` in discovered repos, git hooks in those repos can execute arbitrary code. Fix: pass `-c core.hooksPath=/dev/null` to all git subprocess calls.
+
+**12. No CSRF protection on webapp POST requests**
+The webapp middleware checks `fm_token` cookie but has no CSRF token on state-changing requests. A malicious site can submit POST requests to your API using the user's cookies.
+
+### MEDIUM (Fix Before Scale)
+
+**13. No database migration strategy (`server/db.py`)**
+Schema uses `CREATE TABLE IF NOT EXISTS` which won't apply column additions or type changes. You need a migration system (Alembic, or even a simple version table with sequential SQL scripts) before the first schema change.
+
+> Question for team: How do you plan to evolve the schema? What happens when you need to add a column to `traces`?
+
+**14. Deduplication is fragile (`daily_scan.py`)**
+`is_duplicate()` compares first 120 characters of content. Two different learnings that start the same way are falsely deduplicated. Two identical learnings with different prefixes are falsely unique. Use SHA-256 hash of full content instead.
+
+**15. Cost estimation is inaccurate (`server/main.py:118-122`)**
+`input_tokens = len(prompt) / 4` is a rough guess. Real tokenization can differ by 2-3x. If you underestimate, you eat the cost. If you overestimate, users are overcharged.
+
+> Question for team: Are you tracking actual vs estimated costs? What's the variance?
+
+**16. No health check endpoint**
+No `/health` or `/ready` endpoint for load balancer probes, uptime monitoring, or deployment validation.
+
+**17. Expired sessions never cleaned up (`server/db.py:325-342`)**
+Sessions have `expires_at` but are never deleted. Table grows forever. Add a cleanup cron or TTL-based deletion.
+
+**18. Missing indexes on hot query paths**
+`sessions` table has no index on `user_id`. `magic_link_tokens` has no index on `email`. These become full table scans at scale.
+
+### LOW (Tech Debt)
+
+**19.** `fcntl` file locks in scanner don't work on Windows -- use `filelock` library for cross-platform support.
+
+**20.** Hard-coded `~/Developer` scan root and macOS-specific LaunchAgent paths. These should be configurable.
+
+**21.** No audit logging of auth events, credit changes, or API calls. Makes incident response impossible.
+
+**22.** Error messages leak internal state (balance amounts in 402 responses, different errors for valid vs invalid tokens).
+
+**23.** `inference.py` only catches `ConnectionError` -- timeouts, SSL errors, and HTTP errors crash the CLI.
+
+**24.** Principle content is rendered as raw markdown with no sanitization -- could inject formatting in agent prompts.
+
+---
+
+### Summary: Questions I'd Ask the Team
+
+1. **Have you load-tested the credit system?** The double-spend bug is critical for a billing product.
+2. **What's your migration plan for the DB schema?** `CREATE TABLE IF NOT EXISTS` won't survive the first schema change.
+3. **Are you verifying Stripe webhook signatures?** I see event dedup but not signature verification with `stripe.Webhook.construct_event()`.
+4. **What happens when vLLM goes down?** No health checks, no fallback, no circuit breaker on the inference path.
+5. **How are you monitoring costs?** The `len(prompt)/4` estimation could be losing or gaining money on every call.
+6. **Is `balance_usd` a FLOAT or DECIMAL in MySQL?** Float will cause audit failures.
+7. **Who can access `~/.forgemem/config.json`?** It contains API keys and JWT tokens in plaintext.
+8. **What's your plan for schema evolution?** Adding a column to `traces` or `principles` won't work with current approach.
+9. **Are magic link emails rate-limited upstream (Resend)?** If not, your endpoint is an email bombing vector.
+10. **Have you tested concurrent sync pushes from two devices?** The upsert logic may have race conditions.
+
+---
+
 ## Verdict
 
 ForgeMem solves a real problem at the right time, but has almost no structural moat today. The defensibility comes entirely from execution speed and user-accumulated data, both of which are fragile.
