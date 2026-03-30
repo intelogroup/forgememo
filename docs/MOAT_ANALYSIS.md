@@ -604,6 +604,23 @@ forgemem stats --json
 
 **Implementation:** Add a `--json` / `--format json` flag to `search`, `stats`, `list`, `save`. In `cli.py`, check the flag and call `json.dumps()` instead of Rich formatting.
 
+**Bonus — TTY auto-detection:** When `stdout.isatty()` is false (piped to another command or agent subprocess), auto-switch to JSON output without requiring `--json`. This makes ForgeMem pipe-friendly with zero config:
+```bash
+# Human in terminal: gets Rich formatted output
+forgemem search "caching"
+
+# Agent or pipe: automatically gets JSON
+forgemem search "caching" | jq '.principles[0]'
+```
+
+**Bonus — field selection (from `gh` pattern):**
+```bash
+forgemem search "auth" --json --fields principle,score,tags
+```
+Lets agents request only what they need, reducing token waste.
+
+**Source:** [clig.dev](https://clig.dev/) | [12 Rules of Great CLI UX](https://dev.to/chengyixu/the-12-rules-of-great-cli-ux-lessons-from-building-30-developer-tools-39o6) | [CLI tools beating MCP by 33% in token efficiency](https://jannikreinhard.com/2026/02/22/why-cli-tools-are-beating-mcp-for-ai-agents/)
+
 #### 2. Richer MCP Tool Descriptions with Usage Examples
 
 **Current state:** MCP tools have functional docstrings but lack examples and edge-case guidance. When an agent reads the tool description, it has to guess the right parameters.
@@ -891,7 +908,48 @@ The HTTP API (`forgemem/api.py`, `server/main.py`) is already functional but nee
 | Change | Effort | Impact |
 |--------|--------|--------|
 | `forgemem context` MCP tool | 4 hours | High — best agent UX improvement |
+| Pydantic return types on MCP tools | 4 hours | High — structured output for all MCP clients |
+| OS keychain for secrets via `keyring` | 3 hours | High — fixes plaintext API key vulnerability |
 | Optional dependency groups | 2 hours | Medium — cleaner installs |
-| Homebrew tap | 2 hours | Medium — lowers install barrier |
+| Homebrew tap + `uv tool install` docs | 2 hours | Medium — lowers install barrier |
 | Migrate core.py from argparse to kwargs | 1 day | Medium — enables library use |
 | `forgemem watch --json` | 4 hours | Medium — enables multi-agent workflows |
+| Richer exit codes (0-6 by error type) | 1 hour | Medium — better scripting + CI integration |
+| `--dry-run` flag for `distill` and `mine` | 2 hours | Low — safety for agents and humans |
+
+### ADDITIONAL RECOMMENDATIONS FROM RESEARCH
+
+**Pydantic return types on MCP tools.** FastMCP 2.10+ auto-generates structured content when tools return Pydantic models. ForgeMem currently returns raw strings. Migrate to typed returns:
+```python
+from pydantic import BaseModel
+
+class MemoryResult(BaseModel):
+    principles: list[dict]
+    traces: list[dict]
+    query: str
+    total_results: int
+
+@mcp.tool()
+def retrieve_memories(...) -> MemoryResult:
+    return MemoryResult(principles=..., traces=..., query=query, total_results=len(results))
+```
+This gives MCP clients machine-readable structured content alongside human-readable text. **Source:** [FastMCP Tools Docs](https://gofastmcp.com/servers/tools)
+
+**OS keychain for secret storage.** API keys in `~/.forgemem/config.json` are plaintext. Use Python's `keyring` library (v25.7+) for cross-platform OS keychain integration:
+```python
+import keyring
+keyring.set_password("forgemem", "anthropic_api_key", "sk-ant-...")
+key = keyring.get_password("forgemem", "anthropic_api_key")
+```
+Uses macOS Keychain, Windows Credential Locker, Linux Secret Service automatically. Fall back to config.json if keyring unavailable. Add `forgemem auth status` to show where credentials are stored (without revealing values). **Source:** [Python keyring](https://keyring.readthedocs.io/)
+
+**Richer exit codes.** Currently ForgeMem uses only 0 and 1. Adopt specific codes so agents and scripts can handle errors programmatically:
+- `0` = success, `1` = general error, `2` = invalid arguments, `3` = DB not found, `4` = provider not configured, `5` = network/sync error, `6` = auth required
+
+**Structured error responses in `--json` mode.** Currently errors are Rich-formatted strings. In JSON mode, return:
+```json
+{"ok": false, "error": "provider_not_configured", "message": "Run forgemem config to set up a provider", "retryable": false}
+```
+The `retryable` field lets agents decide whether to retry or bail. **Source:** [Writing CLI Tools That AI Agents Actually Want to Use](https://dev.to/uenyioha/writing-cli-tools-that-ai-agents-actually-want-to-use-39no)
+
+**Opt-in anonymous telemetry.** Track command invoked, success/failure, latency, memory count, provider type. Never track content, keys, or paths. Opt-out via `FORGEMEM_TELEMETRY=false` or `DO_NOT_TRACK=1`. Pattern from [Chroma](https://docs.trychroma.com/telemetry) and [PostHog Python SDK](https://posthog.com/docs/libraries/python). ForgeMem already has `device_id` in config — use it as the anonymous identifier.
