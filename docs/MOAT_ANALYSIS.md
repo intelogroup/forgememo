@@ -158,7 +158,7 @@ ForgeMem solves a real problem at the right time, but has almost no structural m
 
 The four items above form a **connected stack** that, built together, would create a real moat:
 
-```
+```text
 ┌─────────────────────────────────────────────────┐
 │  4. GitHub/Google OAuth (unblocks adoption)      │
 │     ↓                                            │
@@ -174,4 +174,4 @@ The four items above form a **connected stack** that, built together, would crea
 1. **OAuth first** — it's the blocker. Users won't sign up for managed service with email-only magic link. Add GitHub + Google OAuth to the Next.js webapp.
 2. **Cross-device sync** — already built, but useless without frictionless auth. Once OAuth ships, promote sync as a killer feature.
 3. **Cloud-scheduled inference** — with auth + sync in place, this becomes the paid tier differentiator.
-4. **White-label model** — longer-term proprietary moat. Ship after the cloud layer is generating revenue.
+4. **White-label model** — longer-term proprietary moat. Ship after the cloud layer is generating revenue. (Note: this is emphasized in external communications because it's the most technically novel initiative and best illustrates long-term differentiation, even though OAuth/sync are tactical prerequisites that ship first.)
