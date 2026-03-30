@@ -60,7 +60,7 @@ async def unhandled_exception_handler(request, exc):
 ANTHROPIC_API_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
 PLATFORM_FEE_USD     = float(os.environ.get("PLATFORM_FEE_USD", "0.02"))
 FREE_CREDIT_USD      = float(os.environ.get("FREE_CREDIT_USD", "5.0"))
-API_BASE_URL         = os.environ.get("API_BASE_URL", "https://api.forgemem.com")
+API_BASE_URL         = os.environ.get("API_BASE_URL", "https://api.forgememo.com")
 GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GITHUB_CLIENT_ID     = os.environ.get("GITHUB_CLIENT_ID", "")
