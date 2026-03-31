@@ -135,7 +135,10 @@ def _main(
     _SKIP_AUTO_INIT = {"init", "mcp", "help", None}
     if ctx.invoked_subcommand not in _SKIP_AUTO_INIT and not DB_PATH.exists():
         console.print("[dim]First run detected — initializing forgememo...[/]")
-        init(yes=True, provider=None)
+        from forgememo.storage import init_db
+        init_db()
+        _register_mcp(Path.home() / ".claude" / "settings.json")
+        _auto_detect_and_generate_skills(yes=True)
     if ctx.invoked_subcommand not in {"mcp"}:
         import atexit
 

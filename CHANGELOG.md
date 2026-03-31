@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-03-31
+
+- Fix: auto-init in `_main` callback called full `init()` which ran `_prompt_provider_setup` and raised `typer.Exit(1)` in non-TTY sessions, causing `forgememo status` to fail on first run even though the DB was created successfully; auto-init now calls only `init_db()` + `_register_mcp()` + `_auto_detect_and_generate_skills()` directly — no provider prompt
+
 ## [0.2.3] — 2026-03-31
 
 - Fix: auto-init in `_main` callback called `init(yes=True)` without `provider=None` — Typer passes the `OptionInfo` default object which is truthy, causing `_configure_provider_noninteractive` to error with "Invalid provider: <typer.models.OptionInfo object>" on first `forgememo status` run
