@@ -1,0 +1,19 @@
+include LICENSE
+include README.md
+recursive-exclude tests *
+recursive-exclude webapp *
+recursive-exclude server *
+recursive-exclude e2e *
+recursive-exclude docs *
+recursive-exclude .gstack *
+recursive-exclude .playwright-mcp *
+global-exclude *.sh
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .gitignore
+global-exclude .ruff_cache
+global-exclude .env*
+global-exclude *.pem
+global-exclude *.key
+global-exclude *secrets*
+global-exclude md_scan_hashes.json
