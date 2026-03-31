@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-DB_PATH = Path(os.environ.get("FORGEMEM_DB", Path.home() / "Developer" / "Forgemem" / "forgemem_memory.db"))
+DB_PATH = Path(os.environ.get("FORGEMEM_DB", Path.home() / ".forgememo" / "forgememo_memory.db"))
 
 try:
     from fastmcp import FastMCP

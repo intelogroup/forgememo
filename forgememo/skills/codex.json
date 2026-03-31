@@ -1,6 +1,6 @@
 {
-  "forgemem_skill_version": 1,
-  "description": "Forgemem persistent memory tools for AI agents",
+  "forgemem_skill_version": 3,
+  "description": "Forgememo persistent memory tools for AI agents",
   "setup": {
     "description": "First-time setup — requires the user to complete interactive provider selection",
     "commands": [
@@ -11,39 +11,49 @@
   },
   "tools": [
     {
-      "name": "forgemem_store",
-      "description": "Save a memory trace to Forgemem. Use after fixing bugs, completing features, or noticing reusable lessons.",
-      "command": "forgemem store",
-      "parameters": {
-        "content": "What happened, what worked or failed, include file paths and error messages",
-        "type": "success|failure|plan|note",
-        "project": "repo name (auto-detected from git if omitted)",
-        "distill": "true to auto-extract a durable principle"
-      }
-    },
-    {
-      "name": "forgemem_search",
-      "description": "Search memory for past learnings, patterns, or failures.",
-      "command": "forgemem search",
+      "name": "search_memories",
+      "description": "Compact memory search (IDs + titles only).",
+      "command": "forgememo.mcp.search_memories",
       "parameters": {
         "query": "what to search for",
-        "project": "scope to a specific repo (optional)",
-        "k": "max results (default 5)"
+        "workspace_root": "repo path",
+        "k": "max results (default 10)",
+        "type": "optional type filter",
+        "concepts": "optional list of concepts"
       }
     },
     {
-      "name": "forgemem_distill",
-      "description": "Distill raw traces into durable principles via Claude Haiku. Run at end of session.",
-      "command": "forgemem distill",
+      "name": "get_memory_details",
+      "description": "Fetch full content for IDs returned by search_memories.",
+      "command": "forgememo.mcp.get_memory_details",
       "parameters": {
-        "target": "session ID or 'all' (default: all)"
+        "ids": "list of IDs like d:42 or s:3",
+        "workspace_root": "repo path"
       }
     },
     {
-      "name": "forgemem_mine",
-      "description": "Mine all ~/Developer repos for recent git commits and markdown changes, extracting learnings.",
-      "command": "forgemem mine",
-      "parameters": {}
+      "name": "get_memory_timeline",
+      "description": "Chronological context around a distilled summary.",
+      "command": "forgememo.mcp.get_memory_timeline",
+      "parameters": {
+        "anchor_id": "d:<id>",
+        "workspace_root": "repo path",
+        "depth_before": "default 3",
+        "depth_after": "default 3"
+      }
+    },
+    {
+      "name": "save_session_summary",
+      "description": "Write a structured session summary (daemon write path).",
+      "command": "forgememo.mcp.save_session_summary",
+      "parameters": {
+        "request": "what the user asked for",
+        "workspace_root": "repo path",
+        "investigation": "what you checked",
+        "learnings": "key technical learnings",
+        "next_steps": "what to do next",
+        "concepts": "optional list"
+      }
     }
   ]
 }

@@ -118,7 +118,7 @@ def insert_principle(conn, source_trace_id, project_tag, trace_type, principle, 
 
 def distill_via_api(content: str, trace_type: str) -> dict:
     """Extract a principle from a trace using the configured AI provider."""
-    from forgemem import inference
+    from forgememo import inference
     prompt = (
         f'Extract a single 1-2 sentence principle from this {trace_type} trace. '
         f'Be concrete and actionable. '
@@ -349,7 +349,7 @@ def cmd_stats(args):
 
 def mine_memories_via_api(md_content: str, filename: str) -> list[dict]:
     """Extract traces from a memory .md file using the configured AI provider."""
-    from forgemem import inference
+    from forgememo import inference
     prompt = (
         "You are reading a project memory file. Extract ALL meaningful traces (successes, failures, notes, plans) "
         "that could be saved as long-term lessons. For each trace return a JSON object with keys: "

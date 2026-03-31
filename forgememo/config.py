@@ -11,13 +11,14 @@ from pathlib import Path
 CONFIG_PATH = Path(os.environ.get("FORGEMEM_CONFIG", Path.home() / ".forgemem" / "config.json"))
 CREDITS_FLAG_PATH = CONFIG_PATH.parent / ".credits_exhausted"
 
-SUPPORTED_PROVIDERS = ("anthropic", "openai", "gemini", "ollama", "forgememo")
+SUPPORTED_PROVIDERS = ("anthropic", "openai", "gemini", "ollama", "claude_code", "forgememo")
 
 DEFAULT_MODELS = {
     "anthropic": "claude-haiku-4-5-20251001",
     "openai": "gpt-4o-mini",
     "gemini": "gemini-2.0-flash",
     "ollama": "llama3.2",  # auto-detected from running instance if available
+    "claude_code": "claude_code",  # model selected by the claude CLI / user's plan
     "forgememo": "claude-haiku-4-5-20251001",  # managed — model chosen server-side
 }
 
@@ -87,6 +88,8 @@ def get_model(provider: str) -> str:
 def set_provider(provider: str, api_key: str | None = None) -> None:
     if provider not in SUPPORTED_PROVIDERS:
         raise ValueError(f"Unknown provider '{provider}'. Choose: {', '.join(SUPPORTED_PROVIDERS)}")
+    if provider == "claude_code" and api_key:
+        raise ValueError("claude_code provider uses the `claude` CLI — no API key needed")
     cfg = load()
     cfg["provider"] = provider
     if api_key:

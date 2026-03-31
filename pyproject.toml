@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "forgememo"
-version = "0.1.17"
+version = "0.2.0"
 description = "Persistent memory for AI agents — cross-session context that actually sticks"
 authors = [{name = "Forgemem Contributors"}]
 license = "Apache-2.0"
@@ -28,6 +28,7 @@ dependencies = [
     "fastmcp>=2.0.0",
     "flask>=2.3.0",
     "requests>=2.31.0",
+    "requests-unixsocket>=0.3.0",
     "typer>=0.12.0",
     "rich>=13.0.0",
     "questionary>=2.0.0",
@@ -64,3 +65,7 @@ exclude = [
     "*secrets*",
     "md_scan_hashes.json"
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "forgememo/tests"]
+addopts = "--import-mode=append"

@@ -5,6 +5,7 @@ fastmcp>=0.6.0
 # Phase 1: HTTP API
 flask>=2.3.0
 requests>=2.31.0
+requests-unixsocket>=0.3.0
 
 # Optional: for production deployment
 # gunicorn>=21.0.0

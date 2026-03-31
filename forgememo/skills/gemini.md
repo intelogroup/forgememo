@@ -1,4 +1,4 @@
-# forgememo-skill-version: 1
+# forgememo-skill-version: 3
 # Forgemem Memory Skill
 
 You have access to Forgemem, your persistent long-term memory across sessions and projects.
@@ -18,26 +18,35 @@ Do NOT try to bypass first-run setup with `forgememo init --yes` or a non-TTY se
 
 ## When to Use Forgemem
 
-**After fixing a bug or implementing a feature:**
-Run in terminal: `forgememo store "<what happened>" --type success --project <repo-name>`
+**At session start (recall context):**
+```
+search_memories(query="<current task>", workspace_root="<repo-path>")
+```
 
-**After hitting a problem or dead end:**
-Run in terminal: `forgememo store "<what failed and why>" --type failure --project <repo-name>`
+**When you need details for a memory:**
+```
+get_memory_details(ids=["d:42"], workspace_root="<repo-path>")
+```
 
-**When you notice a reusable lesson:**
-Add `--distill` flag to auto-extract a durable principle.
+**When you need temporal context:**
+```
+get_memory_timeline(anchor_id="d:42", workspace_root="<repo-path>")
+```
 
-**At end of session:**
-Run: `forgememo distill current`
-
-**When asked about past work or patterns:**
-Run: `forgememo search "<query>"`
-
-**To mine all repos for recent learnings:**
-Run: `forgememo mine`
+**At end of session (write structured summary):**
+```
+save_session_summary(
+  request="<what the user asked for>",
+  workspace_root="<repo-path>",
+  investigation="<what you checked>",
+  learnings="<key technical learnings>",
+  next_steps="<what to do next>",
+  concepts=["pattern","gotcha"]
+)
+```
 
 ## Principles
 
 - Call Forgemem before repeating something that might have been tried before
-- Keep stored content concrete: include file names, error messages, and the resolution
-- Use `--project <repo>` to scope memory to the current repository
+- Keep summaries concrete: include file paths, errors, and the fix
+- Use `workspace_root` to scope memory to the current repository

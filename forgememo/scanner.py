@@ -19,8 +19,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from forgemem import core, inference
-from forgemem import config as cfg
+from forgememo import core, inference
+from forgememo import config as cfg
 
 try:
     from dotenv import load_dotenv
@@ -197,10 +197,8 @@ def extract_learnings(project: str, git_log: str) -> list[dict]:
 
 def is_duplicate(content: str, project: str) -> bool:
     """Check if a near-identical trace already exists in the DB."""
-    import sqlite3
-    conn = sqlite3.connect(FORGEMEM_DIR / "forgemem_memory.db", timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
+    from forgememo.storage import get_conn
+    conn = get_conn()
     try:
         fingerprint = content[:120].strip()
         row = conn.execute(

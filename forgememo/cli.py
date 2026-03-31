@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -145,8 +146,10 @@ def _main(
 # Constants
 # ---------------------------------------------------------------------------
 
-PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / "com.forgememo.server.plist"
-PLIST_LABEL = "com.forgememo.server"
+PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / "com.forgememo.daemon.plist"
+PLIST_LABEL = "com.forgememo.daemon"
+WORKER_PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / "com.forgememo.worker.plist"
+WORKER_PLIST_LABEL = "com.forgememo.worker"
 MINER_PLIST_PATH = (
     Path.home() / "Library" / "LaunchAgents" / "com.forgememo.miner.plist"
 )
@@ -164,6 +167,45 @@ SKILL_TEMPLATES_DIR = Path(__file__).parent / "skills"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _replace_block(text: str, start: str, end: str, block: str) -> str:
+    """Idempotently replace a block delimited by start/end markers."""
+    if start in text and end in text:
+        pre, rest = text.split(start, 1)
+        _, post = rest.split(end, 1)
+        return f"{pre}{block}{post}"
+    sep = "\n" if text.endswith("\n") else "\n\n"
+    return f"{text}{sep}{block}\n"
+
+
+def _format_context_markdown(project: str, updated: str, principles: list[dict], last_session: dict | None) -> str:
+    lines = [f"Project: {project}", f"Updated: {updated}", ""]
+    lines.append("Principles:")
+    if not principles:
+        lines.append("_No principles found._")
+    else:
+        for p in principles:
+            date = (p.get("ts") or "")[:10]
+            score = p.get("impact_score")
+            score_str = f"score {score}" if score is not None else "score n/a"
+            narrative = p.get("narrative") or ""
+            tail = f" — {narrative}" if narrative else ""
+            lines.append(f"- [{p.get('type','')}] {p.get('title','')} ({score_str}, {date}){tail}")
+
+    lines.append("")
+    lines.append("Last session:")
+    if not last_session:
+        lines.append("_No session summary found._")
+    else:
+        lines.append(f"Request: {last_session.get('request','')}")
+        if last_session.get("investigation"):
+            lines.append(f"Investigation: {last_session.get('investigation')}")
+        if last_session.get("learnings"):
+            lines.append(f"Learnings: {last_session.get('learnings')}")
+        if last_session.get("next_steps"):
+            lines.append(f"Next steps: {last_session.get('next_steps')}")
+    return "\n".join(lines)
 
 
 def _register_mcp(settings_path: Path) -> bool:
@@ -239,6 +281,41 @@ def _detect_project_from_git() -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 
+def _configure_provider_noninteractive(provider: str) -> None:
+    """Configure provider non-interactively (for --provider flag)."""
+    from forgememo import config as fm_cfg
+
+    valid = ["anthropic", "openai", "gemini", "ollama", "claude_code", "forgememo"]
+    if provider not in valid:
+        console.print(f"[red]Invalid provider: {provider}[/]")
+        console.print(f"Valid providers: {', '.join(valid)}")
+        raise typer.Exit(1)
+
+    if provider == "forgememo":
+        fm_cfg.set_provider("forgememo")
+        console.print(
+            "[green]Provider set to forgememo.[/] Run [cyan]forgememo auth[/] to sign in."
+        )
+    elif provider == "ollama":
+        fm_cfg.set_provider("ollama")
+        console.print(
+            "[green]Provider set to ollama.[/] Make sure it's running: [cyan]ollama serve[/]"
+        )
+    elif provider == "claude_code":
+        fm_cfg.set_provider("claude_code")
+        console.print(
+            "[green]Provider set to claude_code.[/] Uses your [cyan]claude[/] CLI session — no API key needed.\n"
+            "  Make sure Claude Code is installed and logged in: [cyan]claude login[/]"
+        )
+    else:
+        fm_cfg.set_provider(provider)
+        console.print(
+            f"[green]Provider set to {provider}.[/] "
+            f"Set [cyan]{provider.upper()}_API_KEY[/] env var or run:\n"
+            f"  [cyan]forgememo config {provider} --key YOUR_KEY[/]"
+        )
+
+
 def _prompt_provider_setup(yes: bool) -> None:
     """If no provider is configured, require interactive provider selection."""
     from forgememo import config as fm_cfg
@@ -267,7 +344,13 @@ def _prompt_provider_setup(yes: bool) -> None:
 
     _choices = [
         questionary.Choice(
-            "forgememo   (managed — no key needed, sign in once)", value="forgememo"
+            "forgememo   (recommended — works with any AI tool, sign in once, no key)", value="forgememo"
+        ),
+        questionary.Choice(
+            "claude_code (Claude subscription via `claude` CLI — no API key needed)", value="claude_code"
+        ),
+        questionary.Choice(
+            "ollama     (local, free, fully private — needs ollama running)", value="ollama"
         ),
         questionary.Choice(
             "anthropic  (BYOK — needs ANTHROPIC_API_KEY)", value="anthropic"
@@ -275,16 +358,13 @@ def _prompt_provider_setup(yes: bool) -> None:
         questionary.Choice("openai     (BYOK — needs OPENAI_API_KEY)", value="openai"),
         questionary.Choice("gemini     (BYOK — needs GEMINI_API_KEY)", value="gemini"),
         questionary.Choice(
-            "ollama     (local, free, private — needs ollama running)", value="ollama"
-        ),
-        questionary.Choice(
             "skip for now  (configure later with forgememo config)", value=None
         ),
     ]
     provider = questionary.select(
         "Choose an inference provider for memory distillation:",
         choices=_choices,
-        default=_choices[-1],
+        default=_choices[0],
     ).ask()
 
     if not provider:
@@ -297,6 +377,15 @@ def _prompt_provider_setup(yes: bool) -> None:
         fm_cfg.set_provider("forgememo")
         console.print("[green]Provider set to forgememo.[/] Let's authenticate now...")
         _do_auth_login()
+        return
+
+    if provider == "claude_code":
+        fm_cfg.set_provider("claude_code")
+        console.print(
+            "[green]Provider set to claude_code.[/] "
+            "Forgememo will use your [cyan]claude[/] CLI session — no API key needed.\n"
+            "  Make sure you're logged in: [cyan]claude login[/]"
+        )
         return
 
     if provider == "ollama":
@@ -331,6 +420,12 @@ def _prompt_provider_setup(yes: bool) -> None:
 @app.command()
 def init(
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts"),
+    provider: Optional[str] = typer.Option(
+        None,
+        "--provider",
+        "-p",
+        help="Provider: anthropic | openai | gemini | ollama | forgememo (skips interactive picker)",
+    ),
 ):
     """Initialize DB, register MCP server, and detect agent skills."""
     # Python version guard
@@ -338,14 +433,10 @@ def init(
         console.print("[red]error:[/] Python 3.9+ required")
         raise typer.Exit(1)
 
-    # DB init
-    from forgememo.core import DB_PATH, get_conn, INIT_SQL
+    # DB init (v2 schema: events + distilled_summaries + session_summaries + legacy compat)
+    from forgememo.storage import init_db, DB_PATH
 
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = get_conn()
-    conn.executescript(INIT_SQL)
-    conn.commit()
-    conn.close()
+    init_db()
     console.print(f"[green]DB initialized:[/] {DB_PATH}")
 
     # MCP registration
@@ -362,7 +453,12 @@ def init(
     # Provider setup — runs only if still unconfigured (Ollama declined or not detected)
     from forgememo import config as fm_cfg
 
-    _prompt_provider_setup(yes)
+    # If provider provided as argument, configure it directly (non-interactive)
+    if provider:
+        _configure_provider_noninteractive(provider)
+        console.print(f"[green]Provider set to {provider} via --provider flag.[/]")
+    else:
+        _prompt_provider_setup(yes)
 
     provider_configured = fm_cfg.load().get("provider") is not None
 
@@ -389,7 +485,7 @@ def init(
             Panel(
                 "[bold green]Forgemem initialized successfully![/]\n\n"
                 "[bold]Next steps:[/]\n"
-                "  1. [cyan]forgememo start[/]          — launch the MCP server (background daemon)\n"
+            "  1. [cyan]forgememo start[/]          — launch the daemon + worker\n"
                 "  2. Restart Claude Code / your AI agent to pick up the MCP connection\n"
                 "  3. [cyan]forgememo status[/]         — verify everything is running\n\n"
                 "[bold]Key commands:[/]\n"
@@ -418,21 +514,33 @@ def _do_start(
         console.print(
             "[bold]Linux detected.[/] To run forgememo as a systemd user service, create:"
         )
-        console.print("\n  [dim]~/.config/systemd/user/forgememo.service[/]\n")
+        console.print("\n  [dim]~/.config/systemd/user/forgememo-daemon.service[/]\n")
         console.print(
             f"[dim]  [Unit]\n"
-            f"  Description=Forgemem MCP server\n"
+            f"  Description=Forgemem Daemon\n"
             f"  After=default.target\n\n"
             f"  [Service]\n"
-            f"  ExecStart={forgememo_bin} mcp\n"
+            f"  ExecStart={forgememo_bin} daemon\n"
             f"  Restart=on-failure\n\n"
             f"  [Install]\n"
             f"  WantedBy=default.target[/]\n"
         )
-        console.print("Then enable it with:")
+        console.print("\n  [dim]~/.config/systemd/user/forgememo-worker.service[/]\n")
+        console.print(
+            f"[dim]  [Unit]\n"
+            f"  Description=Forgemem Worker\n"
+            f"  After=default.target\n\n"
+            f"  [Service]\n"
+            f"  ExecStart={forgememo_bin} worker\n"
+            f"  Restart=on-failure\n\n"
+            f"  [Install]\n"
+            f"  WantedBy=default.target[/]\n"
+        )
+        console.print("Then enable them with:")
         console.print("  [cyan]systemctl --user daemon-reload[/]")
-        console.print("  [cyan]systemctl --user enable --now forgememo[/]")
-        console.print("\nOr just run directly: [cyan]forgememo mcp[/]")
+        console.print("  [cyan]systemctl --user enable --now forgememo-daemon[/]")
+        console.print("  [cyan]systemctl --user enable --now forgememo-worker[/]")
+        console.print("\nOr just run directly: [cyan]forgememo daemon[/]")
         raise typer.Exit(0)
 
     if sys.platform == "win32":
@@ -441,15 +549,19 @@ def _do_start(
             "[bold]Windows detected.[/] To run forgememo at login via Task Scheduler, run:"
         )
         console.print(
-            f'\n  [cyan]schtasks /create /tn "Forgemem MCP" /tr "{forgememo_bin} mcp" '
+            f'\n  [cyan]schtasks /create /tn "Forgemem Daemon" /tr "{forgememo_bin} daemon" '
             f"/sc ONLOGON /f[/]\n"
         )
-        console.print("Or just run directly in a terminal: [cyan]forgememo mcp[/]")
+        console.print(
+            f'\n  [cyan]schtasks /create /tn "Forgemem Worker" /tr "{forgememo_bin} worker" '
+            f"/sc ONLOGON /f[/]\n"
+        )
+        console.print("Or just run directly in a terminal: [cyan]forgememo daemon[/]")
         raise typer.Exit(0)
 
     if sys.platform != "darwin":
         console.print(
-            f"[yellow]Unsupported platform '{sys.platform}'.[/] Run [cyan]forgememo mcp[/] directly."
+            f"[yellow]Unsupported platform '{sys.platform}'.[/] Run [cyan]forgememo daemon[/] directly."
         )
         raise typer.Exit(0)
 
@@ -482,7 +594,7 @@ def _do_start(
     <key>ProgramArguments</key>
     <array>
         <string>{forgememo_bin}</string>
-        <string>mcp</string>
+        <string>daemon</string>
     </array>
     {schedule_xml}
     <key>StandardOutPath</key><string>{LOG_PATH}</string>
@@ -504,6 +616,36 @@ def _do_start(
     else:
         console.print(
             f"[yellow]launchctl load returned {result.returncode}:[/] {result.stderr.strip()}"
+        )
+
+    worker_plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>{WORKER_PLIST_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{forgememo_bin}</string>
+        <string>worker</string>
+    </array>
+    <key>RunAtLoad</key><true/>
+    <key>StandardOutPath</key><string>{LOG_PATH}</string>
+    <key>StandardErrorPath</key><string>{LOG_PATH}</string>
+</dict>
+</plist>
+"""
+    WORKER_PLIST_PATH.write_text(worker_plist_content)
+    console.print(f"[green]worker plist written:[/] {WORKER_PLIST_PATH}")
+    worker_result = subprocess.run(
+        ["launchctl", "load", str(WORKER_PLIST_PATH)],
+        capture_output=True,
+        text=True,
+    )
+    if worker_result.returncode == 0:
+        console.print("[green]worker loaded.[/]")
+    else:
+        console.print(
+            f"[yellow]launchctl load (worker) returned {worker_result.returncode}:[/] {worker_result.stderr.strip()}"
         )
 
     if mine:
@@ -614,10 +756,26 @@ def stop():
                 f"[yellow]launchctl unload (miner) returned {miner_result.returncode}:[/] {miner_result.stderr.strip()}"
             )
 
+    if WORKER_PLIST_PATH.exists():
+        worker_result = subprocess.run(
+            ["launchctl", "unload", str(WORKER_PLIST_PATH)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if worker_result.returncode == 0:
+            console.print("[green]worker unloaded.[/]")
+        else:
+            console.print(
+                f"[yellow]launchctl unload (worker) returned {worker_result.returncode}:[/] {worker_result.stderr.strip()}"
+            )
+
     remove = typer.confirm("Remove plist file(s)?", default=False)
     if remove:
         PLIST_PATH.unlink(missing_ok=True)
         console.print(f"[dim]removed[/] {PLIST_PATH}")
+        WORKER_PLIST_PATH.unlink(missing_ok=True)
+        console.print(f"[dim]removed[/] {WORKER_PLIST_PATH}")
         if MINER_PLIST_PATH.exists():
             MINER_PLIST_PATH.unlink(missing_ok=True)
             console.print(f"[dim]removed[/] {MINER_PLIST_PATH}")
@@ -641,7 +799,7 @@ def status(
             Panel(
                 f"[bold]Scheduled runs have stopped — inference credits exhausted.[/]\n\n"
                 f"Balance: [red]${flag['balance_usd']}[/]  ·  Last failed: {flag['ts'][:10]}\n\n"
-                f"  Add credits → [cyan]https://app.forgememo.com/billing[/]\n"
+                f"  Add credits → [cyan]https://forgememo.com/billing[/]\n"
                 f"  Or switch provider → [cyan]forgememo config provider anthropic --key sk-ant-...[/]",
                 title="[bold red]ACTION REQUIRED — credits exhausted[/]",
                 border_style="red",
@@ -736,7 +894,13 @@ def status(
             if PLIST_PATH.exists()
             else f"[dim]{CROSS} not installed[/]  → run: [cyan]forgememo start[/]"
         )
+        worker_val = (
+            f"[green]{CHECK} plist installed[/]"
+            if WORKER_PLIST_PATH.exists()
+            else f"[dim]{CROSS} not installed[/]  → run: [cyan]forgememo start[/]"
+        )
         table.add_row("Daemon", daemon_val)
+        table.add_row("Worker", worker_val)
 
     console.print(Panel(table, title="Forgemem Status", expand=False))
 
@@ -955,7 +1119,7 @@ def _check_api_response(resp, console) -> None:
     if resp.status_code == 402:
         console.print(
             "[yellow]Sync requires a Sync subscription.[/] "
-            "Upgrade at: https://app.forgememo.com/billing"
+            "Upgrade at: https://forgememo.com/billing"
         )
         raise typer.Exit(1)
 
@@ -969,7 +1133,7 @@ def _do_auth_login() -> bool:
     import urllib.parse
     from forgememo import config as fm_cfg
 
-    port = 47474
+    port = 0
     state = secrets.token_urlsafe(16)
     received_token: dict = {}
 
@@ -993,9 +1157,10 @@ def _do_auth_login() -> bool:
         server = http.server.HTTPServer(("127.0.0.1", port), _Handler)
     except OSError:
         console.print(
-            f"[red]error:[/] port {port} is already in use. Stop the process using it and try again."
+            "[red]error:[/] could not bind a local callback port. Try again."
         )
         raise typer.Exit(1)
+    port = server.server_address[1]
 
     def _serve():
         server.handle_request()  # handle one request then stop
@@ -1004,7 +1169,9 @@ def _do_auth_login() -> bool:
     t = threading.Thread(target=_serve, daemon=True)
     t.start()
 
-    _api_base = os.environ.get("FORGEMEM_API_URL", "https://api.forgememo.com")
+    _api_base = os.environ.get(
+        "FORGEMEM_API_URL", "https://forgememo-server.onrender.com"
+    )
     login_url = (
         f"{_api_base}/cli-auth?callback=http://127.0.0.1:{port}/callback&state={state}"
     )
@@ -1044,7 +1211,9 @@ def _do_post_auth_setup(jwt: str) -> list:
     import time
     import requests as _req
 
-    _api_base = os.environ.get("FORGEMEM_API_URL", "https://api.forgememo.com")
+    _api_base = os.environ.get(
+        "FORGEMEM_API_URL", "https://forgememo-server.onrender.com"
+    )
 
     try:
         resp = _req.get(
@@ -1058,7 +1227,7 @@ def _do_post_auth_setup(jwt: str) -> list:
     except Exception:
         pass
 
-    port = 47474
+    port = 0
     state = secrets.token_urlsafe(16)
     received_events: list = []
 
@@ -1086,6 +1255,7 @@ def _do_post_auth_setup(jwt: str) -> list:
         server = _ReuseAddrServer(("127.0.0.1", port), _EventHandler)
     except OSError:
         return []
+    port = server.server_address[1]
 
     server.timeout = 1.0
 
@@ -1208,7 +1378,9 @@ def sync(
         console.print("[yellow]Not authenticated.[/] Run: forgememo auth login")
         raise typer.Exit(1)
 
-    managed_url = os.environ.get("FORGEMEM_API_URL", "https://api.forgememo.com")
+    managed_url = os.environ.get(
+        "FORGEMEM_API_URL", "https://forgememo-server.onrender.com"
+    )
     device_id = fm_cfg.get_device_id()
     last_sync = fm_cfg.get_last_sync_ts()
     headers = {"Authorization": f"Bearer {token}"}
@@ -1415,6 +1587,7 @@ def help():
             f"  [cyan]forgememo distill[/]           {_D} condense traces into lasting principles\n"
             f'  [cyan]forgememo search "<query>"[/] {_D} search your memory bank\n'
             f'  [cyan]forgememo store "<text>"[/]   {_D} save a memory manually\n\n'
+            f"  [cyan]forgememo export-context[/]   {_D} write agent context block (CLAUDE.md / AGENTS.md)\n\n"
             "[bold]Management:[/]\n"
             f"  [cyan]forgememo status[/]            {_D} DB stats, server health, skill status\n"
             f"  [cyan]forgememo config[/]            {_D} set/view inference provider & model\n"
@@ -1426,6 +1599,119 @@ def help():
             expand=False,
         )
     )
+
+
+@app.command("export-context")
+def export_context(
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project ID to scope results"),
+    k: int = typer.Option(10, "--k", help="Max principles to include"),
+    template: str = typer.Option(
+        "claude",
+        "--template",
+        help="Template: claude | codex | generic",
+    ),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Write to file"),
+    template_file: Optional[Path] = typer.Option(None, "--template-file", help="Custom Jinja2 template path"),
+):
+    """Export a compact context block for agents."""
+    from forgememo.storage import get_conn
+
+    if template_file and not template_file.exists():
+        console.print(f"[red]error:[/] template file not found: {template_file}")
+        raise typer.Exit(1)
+
+    if template not in {"claude", "codex", "generic"}:
+        console.print("[red]error:[/] template must be one of: claude | codex | generic")
+        raise typer.Exit(1)
+
+    conn = get_conn()
+    try:
+        params = []
+        where = ""
+        if project:
+            where = "WHERE project_id = ?"
+            params.append(project)
+
+        sql = (
+            "SELECT id, ts, type, title, narrative, impact_score "
+            "FROM distilled_summaries "
+            f"{where} "
+            "UNION ALL "
+            "SELECT id, ts, type, title, narrative, impact_score "
+            "FROM distilled_summaries_compat "
+            f"{where} "
+            "ORDER BY impact_score DESC, ts DESC LIMIT ?"
+        )
+        params = params + params + [k]
+        rows = conn.execute(sql, params).fetchall()
+        principles = [dict(r) for r in rows]
+
+        sess_params = []
+        sess_where = ""
+        if project:
+            sess_where = "WHERE project_id = ?"
+            sess_params.append(project)
+        last_session = conn.execute(
+            f"SELECT * FROM session_summaries {sess_where} ORDER BY ts DESC LIMIT 1",
+            sess_params,
+        ).fetchone()
+        last_session = dict(last_session) if last_session else None
+    finally:
+        conn.close()
+
+    updated = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ")
+    project_label = project or "all"
+
+    context_md = _format_context_markdown(project_label, updated, principles, last_session)
+
+    if template_file:
+        try:
+            from jinja2 import Template
+        except ImportError:
+            console.print("[red]error:[/] jinja2 required for --template-file (pip install jinja2)")
+            raise typer.Exit(1)
+        tmpl = Template(template_file.read_text())
+        body = tmpl.render(
+            project=project_label,
+            updated=updated,
+            principles=principles,
+            last_session=last_session,
+        )
+        block = body
+        start = end = None
+    else:
+        if template == "claude":
+            block = f"<forgememo-context>\n{context_md}\n</forgememo-context>\n"
+            start = "<forgememo-context>"
+            end = "</forgememo-context>"
+        elif template == "codex":
+            block = (
+                "<!-- forgememo-context:start -->\n"
+                f"{context_md}\n"
+                "<!-- forgememo-context:end -->\n"
+            )
+            start = "<!-- forgememo-context:start -->"
+            end = "<!-- forgememo-context:end -->"
+        else:
+            block = context_md + "\n"
+            start = end = None
+
+    if not output:
+        if template == "claude":
+            output = Path("CLAUDE.md")
+        elif template == "codex":
+            output = Path("AGENTS.md")
+
+    if output:
+        existing = output.read_text() if output.exists() else ""
+        if start and end:
+            updated_text = _replace_block(existing, start, end, block)
+        else:
+            updated_text = block if not existing else existing + "\n" + block
+        output.write_text(updated_text)
+        console.print(f"[green]{CHECK}[/] wrote {output}")
+    else:
+        console.print(block)
 
 
 @app.command(hidden=True)
@@ -1440,6 +1726,22 @@ def mcp(http: bool = typer.Option(False)):
     from forgememo import mcp_server
 
     mcp_server.mcp.run()
+
+
+@app.command(hidden=True)
+def daemon():
+    """Run the daemon API server (socket-first)."""
+    from forgememo import daemon as _daemon
+
+    _daemon.main()
+
+
+@app.command(hidden=True)
+def worker():
+    """Run the background distillation worker."""
+    from forgememo import worker as _worker
+
+    _worker.main()
 
 
 # ---------------------------------------------------------------------------

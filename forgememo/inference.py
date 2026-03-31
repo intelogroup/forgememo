@@ -5,7 +5,7 @@ Routes LLM calls to the configured provider (BYOK or managed).
 
 import os
 import sys
-from forgemem import config as cfg
+from forgememo import config as cfg
 
 
 def call(prompt: str, max_tokens: int = 300, model: str | None = None) -> str:
