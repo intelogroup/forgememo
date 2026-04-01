@@ -88,9 +88,10 @@ def _call_openai(prompt: str, max_tokens: int, model: str) -> str:
 
 def _call_gemini(prompt: str, max_tokens: int, model: str) -> str:
     try:
-        import google.generativeai as genai
+        import google.genai as genai
+        from google.genai import types as genai_types
     except ImportError:
-        print("ERROR: pip install google-generativeai", file=sys.stderr)
+        print("ERROR: pip install google-genai", file=sys.stderr)
         sys.exit(1)
 
     api_key = cfg.get_api_key("gemini")
@@ -103,11 +104,11 @@ def _call_gemini(prompt: str, max_tokens: int, model: str) -> str:
         )
         sys.exit(1)
 
-    genai.configure(api_key=api_key)
-    gemini_model = genai.GenerativeModel(model)
-    response = gemini_model.generate_content(
-        prompt,
-        generation_config={"max_output_tokens": max_tokens},
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=genai_types.GenerateContentConfig(max_output_tokens=max_tokens),
     )
     return response.text.strip()
 

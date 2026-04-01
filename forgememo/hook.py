@@ -170,7 +170,7 @@ def _handle_session_recall(payload: dict, event_name: str) -> int:
         parts.append(f"[Memory] {r.get('title', '')}: {narrative}")
 
     if not parts:
-        print(json.dumps({"decision": "allow"}))
+        print(_format_context_json("", event_name))
         return 0
 
     context = "Forgememo context from previous sessions:\n" + "\n".join(parts)
@@ -185,7 +185,7 @@ def _handle_session_end(payload: dict) -> int:
     import shutil as _shutil
     forgememo_bin = _shutil.which("forgememo")
     if not forgememo_bin:
-        print(json.dumps({"decision": "allow"}))
+        print(json.dumps({}))
         return 0
     cmd = [forgememo_bin, "end-session", "--session-id", session_id, "--project-dir", cwd]
     try:
@@ -202,7 +202,7 @@ def _handle_session_end(payload: dict) -> int:
             )
     except Exception:
         pass
-    print(json.dumps({"decision": "allow"}))
+    print(json.dumps({}))
     return 0
 
 

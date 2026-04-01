@@ -825,29 +825,42 @@ def start(
 def stop():
     """Unload the LaunchAgent and optionally remove the plist."""
     if sys.platform == "linux":
-        _stop_r = subprocess.run(
-            ["systemctl", "--user", "stop", "forgememo-daemon", "forgememo-worker"],
-            check=False, capture_output=True, text=True,
-        )
-        _dis_r = subprocess.run(
-            ["systemctl", "--user", "disable", "forgememo-daemon", "forgememo-worker"],
-            check=False, capture_output=True, text=True,
-        )
-        if _stop_r.returncode == 0:
+        def _run_systemctl(*args):
+            try:
+                return subprocess.run(
+                    ["systemctl", "--user", *args],
+                    check=False, capture_output=True, text=True, timeout=10,
+                )
+            except subprocess.TimeoutExpired:
+                return None
+
+        _stop_r = _run_systemctl("stop", "forgememo-daemon", "forgememo-worker")
+        _dis_r = _run_systemctl("disable", "forgememo-daemon", "forgememo-worker")
+
+        if _stop_r is None:
+            console.print("[yellow]systemctl stop timed out — killing process directly[/]")
+            subprocess.run(["pkill", "-f", "forgememo.*daemon"], check=False)
+        elif _stop_r.returncode == 0:
             console.print("[green]forgememo-daemon and forgememo-worker stopped.[/]")
         else:
+            subprocess.run(["pkill", "-f", "forgememo.*daemon"], check=False)
             console.print(f"[yellow]stop failed:[/] {_stop_r.stderr.strip()}")
-        if _dis_r.returncode == 0:
+
+        if _dis_r is not None and _dis_r.returncode == 0:
             console.print("[green]services disabled.[/]")
+
         systemd_dir = Path.home() / ".config" / "systemd" / "user"
-        remove = typer.confirm("Remove unit files?", default=False)
+        if sys.stdin.isatty():
+            remove = typer.confirm("Remove unit files?", default=False)
+        else:
+            remove = False
         if remove:
             for name in ("forgememo-daemon.service", "forgememo-worker.service"):
                 p = systemd_dir / name
                 if p.exists():
                     p.unlink()
                     console.print(f"[dim]removed[/] {p}")
-            subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+            _run_systemctl("daemon-reload")
         raise typer.Exit(0)
 
     if sys.platform == "win32":
@@ -929,7 +942,10 @@ def stop():
                 f"[yellow]launchctl unload (worker) returned {worker_result.returncode}:[/] {worker_result.stderr.strip()}"
             )
 
-    remove = typer.confirm("Remove plist file(s)?", default=False)
+    if sys.stdin.isatty():
+        remove = typer.confirm("Remove plist file(s)?", default=False)
+    else:
+        remove = False
     if remove:
         PLIST_PATH.unlink(missing_ok=True)
         console.print(f"[dim]removed[/] {PLIST_PATH}")
