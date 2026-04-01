@@ -447,29 +447,46 @@ jobs:
           print(f'All imports OK in clean container — v{forgememo.__version__}')
           "
 
-      - name: Init and start daemon in clean container
+      - name: Init forgememo in container
         run: |
           mkdir -p /root/.claude /root/.gemini /root/.codex
           echo '{}' > /root/.claude/settings.json
           forgememo init --yes --provider claude_code
+          echo "Init OK"
 
-          python -m forgememo.daemon > /tmp/daemon_out.log 2>&1 &
-          DAEMON_PID=$!
-          echo "Daemon PID: $DAEMON_PID"
+      - name: Start daemon and verify health in container
+        run: |
+          python -c "
+          import subprocess, time, requests, sys
 
-          for i in 1 2 3 4 5 6 7 8 9 10; do
-            if ! kill -0 $DAEMON_PID 2>/dev/null; then
-              echo "ERROR: daemon process died"
-              cat /tmp/daemon_out.log
-              exit 1
-            fi
-            if python -c "import requests; r=requests.get('http://127.0.0.1:5555/health',timeout=2); exit(0 if r.ok else 1)" 2>/dev/null; then
-              echo "Daemon healthy after ${i}s"
-              break
-            fi
-            sleep 1
-          done
+          proc = subprocess.Popen(
+              [sys.executable, '-m', 'forgememo.daemon'],
+              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+          )
 
-          python -c "import requests; r=requests.get('http://127.0.0.1:5555/health',timeout=5); assert r.json()['ok']; print('Container daemon health OK')"
+          for i in range(15):
+              if proc.poll() is not None:
+                  out = proc.stdout.read().decode()
+                  print(f'ERROR: daemon exited with code {proc.returncode}')
+                  print(out)
+                  sys.exit(1)
+              try:
+                  r = requests.get('http://127.0.0.1:5555/health', timeout=2)
+                  if r.ok:
+                      print(f'Daemon healthy after {i+1}s')
+                      break
+              except Exception:
+                  pass
+              time.sleep(1)
+          else:
+              out = proc.stdout.read(4096).decode() if proc.stdout else ''
+              print(f'ERROR: daemon never became healthy')
+              print(out)
+              sys.exit(1)
+
+          r = requests.get('http://127.0.0.1:5555/health', timeout=5)
+          assert r.json()['ok'], 'unhealthy'
+          print('Container daemon health OK')
+          "
         env:
           FORGEMEMO_HTTP_PORT: "5555"
