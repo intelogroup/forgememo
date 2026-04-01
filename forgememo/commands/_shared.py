@@ -151,17 +151,34 @@ def _register_mcp(settings_path: Path) -> bool:
 
 
 def _register_hooks(settings_path: Path) -> bool:
-    """Idempotently add UserPromptSubmit + Stop + PostToolUse hooks.
+    """Idempotently register SessionStart, SessionEnd, and PostToolUse hooks.
 
     Uses the absolute path to the forgememo binary so hooks work in Claude
     Code's restricted shell environment where $PATH may not include pip/pipx
-    install directories.  Migrates existing bare-name registrations on re-init.
+    install directories.  Migrates existing bare-name and old event-name
+    (UserPromptSubmit → SessionStart, Stop → SessionEnd) registrations on re-init.
     """
     bin_path = _forgememo_bin()
     data = json.loads(settings_path.read_text()) if settings_path.exists() else {}
     hooks = data.setdefault("hooks", {})
     changed = False
-    for event in ("UserPromptSubmit", "Stop", "PostToolUse"):
+
+    # Remove legacy event registrations (old names replaced by canonical ones)
+    for old_event in ("UserPromptSubmit", "Stop"):
+        if old_event in hooks:
+            old_entries = hooks[old_event]
+            kept = [
+                h for h in old_entries
+                if "forgememo hook" not in h.get("hooks", [{}])[0].get("command", "")
+            ]
+            if len(kept) != len(old_entries):
+                if kept:
+                    hooks[old_event] = kept
+                else:
+                    del hooks[old_event]
+                changed = True
+
+    for event in ("SessionStart", "SessionEnd", "PostToolUse"):
         want_cmd = f"{bin_path} hook {event}"
         existing = hooks.get(event, [])
         # Find existing entry (bare or absolute path)

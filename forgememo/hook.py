@@ -188,30 +188,8 @@ def _format_context_json(text: str, event_name: str) -> str:
     return json.dumps({"systemMessage": text})
 
 
-def _is_session_start(payload: dict) -> bool:
-    """Return True if this is the first user prompt in the session.
-
-    Reads transcript_path (provided by Claude Code) and checks whether any
-    assistant turns have been recorded yet.  Returns True (= session start)
-    when the transcript is absent, unreadable, or has no assistant messages.
-    """
-    transcript_path = payload.get("transcript_path")
-    if not transcript_path:
-        return True
-    try:
-        import json as _json
-        from pathlib import Path as _Path
-        data = _json.loads(_Path(transcript_path).read_text())
-        messages = data if isinstance(data, list) else data.get("messages", [])
-        return not any(m.get("role") == "assistant" for m in messages)
-    except Exception:
-        return True  # can't read transcript → treat as session start
-
-
 def _handle_session_recall(payload: dict, event_name: str) -> int:
-    """Inject project memories on session start (first user prompt only)."""
-    if not _is_session_start(payload):
-        return 0
+    """Fetch recent memories and inject them as context on session start."""
     if not _ensure_daemon():
         print(
             _format_context_json(

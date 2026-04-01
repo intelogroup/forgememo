@@ -341,7 +341,7 @@ class TestRegisterHooksAbsPath:
         _register_hooks(settings)
 
         data = self._read_settings(settings)
-        for event in ("UserPromptSubmit", "Stop", "PostToolUse"):
+        for event in ("SessionStart", "SessionEnd", "PostToolUse"):
             cmd = data["hooks"][event][0]["hooks"][0]["command"]
             assert cmd == f"{fake_bin} hook {event}", (
                 f"{event} hook should use absolute path, got: {cmd!r}"
@@ -359,7 +359,7 @@ class TestRegisterHooksAbsPath:
         old = {
             "hooks": {
                 event: [{"hooks": [{"type": "command", "command": f"forgememo hook {event}"}]}]
-                for event in ("UserPromptSubmit", "Stop", "PostToolUse")
+                for event in ("SessionStart", "SessionEnd", "PostToolUse")
             }
         }
         settings = tmp_path / "settings.json"
@@ -369,9 +369,36 @@ class TestRegisterHooksAbsPath:
         assert changed, "should have migrated bare-name commands"
 
         data = self._read_settings(settings)
-        for event in ("UserPromptSubmit", "Stop", "PostToolUse"):
+        for event in ("SessionStart", "SessionEnd", "PostToolUse"):
             cmd = data["hooks"][event][0]["hooks"][0]["command"]
             assert cmd == f"{fake_bin} hook {event}"
+
+    def test_hooks_migrate_legacy_event_names(self, tmp_path, monkeypatch):
+        """UserPromptSubmit and Stop entries must be removed and replaced with
+        SessionStart/SessionEnd on re-init."""
+        import json
+        from forgememo.commands._shared import _register_hooks
+
+        fake_bin = "/usr/local/bin/forgememo"
+        monkeypatch.setattr("shutil.which", lambda _: fake_bin)
+
+        old = {
+            "hooks": {
+                event: [{"hooks": [{"type": "command", "command": f"forgememo hook {event}"}]}]
+                for event in ("UserPromptSubmit", "Stop", "PostToolUse")
+            }
+        }
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps(old))
+
+        changed = _register_hooks(settings)
+        assert changed
+
+        data = self._read_settings(settings)
+        assert "UserPromptSubmit" not in data["hooks"]
+        assert "Stop" not in data["hooks"]
+        assert "SessionStart" in data["hooks"]
+        assert "SessionEnd" in data["hooks"]
 
     def test_hooks_idempotent_when_already_absolute(self, tmp_path, monkeypatch):
         """No write if the absolute path is already registered."""
