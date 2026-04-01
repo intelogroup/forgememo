@@ -782,7 +782,6 @@ class TestInferenceErrorPaths:
 
     def test_missing_openai_key_exits(self, monkeypatch):
         import forgememo.inference as inference
-        from openai import OpenAI  # ensure importable
 
         monkeypatch.setattr("forgememo.inference.cfg.get_provider", lambda: "openai")
         monkeypatch.setattr("forgememo.inference.cfg.get_model", lambda _: "gpt-4o")
