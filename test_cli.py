@@ -179,8 +179,8 @@ class TestInitRequiresTTY:
         """When no provider exists yet, non-TTY init must fail instead of bypassing setup."""
         with (
             patch("forgememo.core.DB_PATH", tmp_path / "forgememo.db"),
-            patch("forgememo.cli._register_mcp", return_value=False),
-            patch("forgememo.cli._auto_detect_and_generate_skills", return_value=None),
+            patch("forgememo.commands.lifecycle._register_mcp", return_value=False),
+            patch("forgememo.commands.lifecycle._auto_detect_and_generate_skills", return_value=None),
             patch("forgememo.config.load", return_value={}),
             patch("sys.stdin") as mock_stdin,
         ):
@@ -194,9 +194,9 @@ class TestInitRequiresTTY:
         """Non-TTY init is allowed after provider setup has already happened."""
         with (
             patch("forgememo.core.DB_PATH", tmp_path / "forgememo.db"),
-            patch("forgememo.cli._register_mcp", return_value=False),
-            patch("forgememo.cli._auto_detect_and_generate_skills", return_value=None),
-            patch("forgememo.cli._do_start", return_value=None),
+            patch("forgememo.commands.lifecycle._register_mcp", return_value=False),
+            patch("forgememo.commands.lifecycle._auto_detect_and_generate_skills", return_value=None),
+            patch("forgememo.commands.lifecycle._do_start", return_value=None),
             patch("forgememo.config.load", return_value={"provider": "forgememo"}),
             patch("sys.stdin") as mock_stdin,
         ):
@@ -222,11 +222,11 @@ class TestStartMine:
         log_path = tmp_path / "Logs" / "forgememo.log"
 
         with (
-            patch("forgememo.cli.PLIST_PATH", server_plist),
-            patch("forgememo.cli.MINER_PLIST_PATH", miner_plist),
-            patch("forgememo.cli.LOG_PATH", log_path),
-            patch("forgememo.cli._register_mcp", return_value=False),
-            patch("forgememo.cli._auto_detect_and_generate_skills", return_value=None),
+            patch("forgememo.commands.lifecycle.PLIST_PATH", server_plist),
+            patch("forgememo.commands.lifecycle.MINER_PLIST_PATH", miner_plist),
+            patch("forgememo.commands.lifecycle.LOG_PATH", log_path),
+            patch("forgememo.commands.lifecycle._register_mcp", return_value=False),
+            patch("forgememo.commands.lifecycle._auto_detect_and_generate_skills", return_value=None),
             patch("shutil.which", return_value="/usr/local/bin/forgememo"),
             patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")),
             patch("forgememo.core.DB_PATH", tmp_path / "forgememo.db"),
@@ -252,11 +252,11 @@ class TestStartMine:
         log_path = tmp_path / "Logs" / "forgememo.log"
 
         with (
-            patch("forgememo.cli.PLIST_PATH", server_plist),
-            patch("forgememo.cli.MINER_PLIST_PATH", miner_plist),
-            patch("forgememo.cli.LOG_PATH", log_path),
-            patch("forgememo.cli._register_mcp", return_value=False),
-            patch("forgememo.cli._auto_detect_and_generate_skills", return_value=None),
+            patch("forgememo.commands.lifecycle.PLIST_PATH", server_plist),
+            patch("forgememo.commands.lifecycle.MINER_PLIST_PATH", miner_plist),
+            patch("forgememo.commands.lifecycle.LOG_PATH", log_path),
+            patch("forgememo.commands.lifecycle._register_mcp", return_value=False),
+            patch("forgememo.commands.lifecycle._auto_detect_and_generate_skills", return_value=None),
             patch("shutil.which", return_value="/usr/local/bin/forgememo"),
             patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")),
             patch("forgememo.core.DB_PATH", tmp_path / "forgememo.db"),
@@ -277,11 +277,11 @@ class TestStartMine:
         log_path = tmp_path / "Logs" / "forgememo.log"
 
         with (
-            patch("forgememo.cli.PLIST_PATH", server_plist),
-            patch("forgememo.cli.MINER_PLIST_PATH", miner_plist),
-            patch("forgememo.cli.LOG_PATH", log_path),
-            patch("forgememo.cli._register_mcp", return_value=False),
-            patch("forgememo.cli._auto_detect_and_generate_skills", return_value=None),
+            patch("forgememo.commands.lifecycle.PLIST_PATH", server_plist),
+            patch("forgememo.commands.lifecycle.MINER_PLIST_PATH", miner_plist),
+            patch("forgememo.commands.lifecycle.LOG_PATH", log_path),
+            patch("forgememo.commands.lifecycle._register_mcp", return_value=False),
+            patch("forgememo.commands.lifecycle._auto_detect_and_generate_skills", return_value=None),
             patch("shutil.which", return_value="/usr/local/bin/forgememo"),
             patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")),
             patch("forgememo.core.DB_PATH", tmp_path / "forgememo.db"),
@@ -315,8 +315,8 @@ class TestStop:
             return MagicMock(returncode=0, stderr="")
 
         with (
-            patch("forgememo.cli.PLIST_PATH", server_plist),
-            patch("forgememo.cli.MINER_PLIST_PATH", miner_plist),
+            patch("forgememo.commands.lifecycle.PLIST_PATH", server_plist),
+            patch("forgememo.commands.lifecycle.MINER_PLIST_PATH", miner_plist),
             patch("subprocess.run", side_effect=fake_run),
             patch("typer.confirm", return_value=False),  # don't remove files
             patch("forgememo.config.load", return_value={"provider": "anthropic"}),
@@ -348,8 +348,8 @@ class TestStop:
             return MagicMock(returncode=0, stderr="")
 
         with (
-            patch("forgememo.cli.PLIST_PATH", server_plist),
-            patch("forgememo.cli.MINER_PLIST_PATH", miner_plist),
+            patch("forgememo.commands.lifecycle.PLIST_PATH", server_plist),
+            patch("forgememo.commands.lifecycle.MINER_PLIST_PATH", miner_plist),
             patch("subprocess.run", side_effect=fake_run),
             patch("typer.confirm", return_value=False),
         ):
@@ -374,8 +374,8 @@ class TestStop:
         miner_plist.write_text("dummy")
 
         with (
-            patch("forgememo.cli.PLIST_PATH", server_plist),
-            patch("forgememo.cli.MINER_PLIST_PATH", miner_plist),
+            patch("forgememo.commands.lifecycle.PLIST_PATH", server_plist),
+            patch("forgememo.commands.lifecycle.MINER_PLIST_PATH", miner_plist),
             patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")),
         ):
             # Click's test runner is always non-TTY, so stop should NOT remove files.
@@ -569,7 +569,7 @@ class TestExpiredToken:
     def test_check_api_response_401_raises_exit(self):
         """_check_api_response on 401 must raise typer.Exit(1)."""
         import typer
-        from forgememo.cli import _check_api_response
+        from forgememo.commands.configure import _check_api_response
 
         mock_resp = MagicMock()
         mock_resp.status_code = 401
@@ -579,7 +579,7 @@ class TestExpiredToken:
     def test_check_api_response_401_prints_relogin_hint(self):
         """_check_api_response on 401 must print a hint directing user to auth login."""
         import typer
-        from forgememo.cli import _check_api_response
+        from forgememo.commands.configure import _check_api_response
 
         printed = []
         fake_console = MagicMock()
@@ -596,7 +596,7 @@ class TestExpiredToken:
 
     def test_check_api_response_200_does_not_exit(self):
         """_check_api_response on 200 must not raise."""
-        from forgememo.cli import _check_api_response
+        from forgememo.commands.configure import _check_api_response
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -725,7 +725,7 @@ class TestExpiredToken:
             mock_thread_cls.return_value = mock_thread
 
             # Use a simpler approach: patch _do_auth_login directly to simulate success
-            with patch("forgememo.cli._do_auth_login") as mock_login:
+            with patch("forgememo.commands.configure._do_auth_login") as mock_login:
                 mock_login.return_value = True
                 result = runner.invoke(app, ["auth", "login"])
 
