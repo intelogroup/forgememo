@@ -451,8 +451,14 @@ jobs:
         run: |
           mkdir -p /root/.claude /root/.gemini /root/.codex
           echo '{}' > /root/.claude/settings.json
-          forgememo init --yes --provider claude_code
+          forgememo init --yes --provider claude_code 2>&1 || {
+            echo "Init failed with exit code $?"
+            echo "Trying with TERM=dumb..."
+            TERM=dumb forgememo init --yes --provider claude_code 2>&1
+          }
           echo "Init OK"
+        env:
+          TERM: dumb
 
       - name: Start daemon and verify health in container
         run: |
