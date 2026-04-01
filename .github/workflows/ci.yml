@@ -12,8 +12,6 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.10", "3.12"]
-    env:
-      FORGEMEMO_DAEMON_LOG: ${{ runner.temp }}/forgememo_daemon.log
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
