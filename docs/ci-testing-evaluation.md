@@ -20,7 +20,7 @@ That's **9 environment combinations** minimum, times Python versions (3.10, 3.12
 
 ## Current State
 
-- **GitHub Actions**: `install-smoke-test.yml` runs ubuntu/macos/windows x
+- **GitHub Actions**: `install-smoke-test.yml` runs ubuntu/macOS/windows x
   Python 3.10/3.12 (6 cells) + a Docker container job
 - **pytest CI**: `ci.yml` runs same 3x2 matrix with 321 unit tests
 - **No AI agent integration tests in CI** (agents are tested via skill file
@@ -170,7 +170,7 @@ claude -p "run forgememo init --provider anthropic" --bare --output-format json
 --session-id / --resume         # Multi-turn CI sessions
 ```
 
-- **Install**: `curl -fsSL https://claude.ai/install.sh | bash` (native, no Node.js) or `npm i -g @anthropic-ai/claude-code` (Node.js 18+)
+- **Install**: `curl -fsSL https://claude.ai/install.sh | bash` (native, no Node.js) or `npm i -g @anthropic-ai/claude-code@<pinned-version>` (Node.js 18+)
 - **Auth**: `ANTHROPIC_API_KEY` env var (or Bedrock/Vertex/Foundry credentials)
 - **OS**: macOS 13+, Linux 64-bit (Ubuntu/Debian/Fedora; Alpine needs libgcc, libstdc++, ripgrep), Windows 11 (WSL 1/2 or native PowerShell preview)
 - **Resources**: 4 GB RAM min, 500 MB disk, network required. All inference is server-side.
@@ -185,7 +185,7 @@ claude -p "run forgememo init --provider anthropic" --bare --output-format json
 gemini -p "run forgememo init --provider gemini" --output-format json
 ```
 
-- **Install**: `npm i -g @google/gemini-cli` (Node.js 20+ required). Also via Homebrew, MacPorts, Anaconda.
+- **Install**: `npm i -g @google/gemini-cli@<pinned-version>` (Node.js 20+ required). Also via Homebrew, MacPorts, Anaconda.
 - **Auth**: `GEMINI_API_KEY` env var (simplest for CI; OAuth requires browser). Vertex AI via `GOOGLE_API_KEY` + `GOOGLE_GENAI_USE_VERTEXAI=true`.
 - **OS**: macOS 15+, Ubuntu 20.04+, Windows 11 24H2+, any OS with Node.js 20+
 - **Resources**: 4 GB RAM (16 GB recommended for large codebases), ~150 MB disk
@@ -203,7 +203,7 @@ codex exec "run forgememo init --provider openai" --json --full-auto
 codex exec "..." --yolo  # Bypasses all sandboxing and approval
 ```
 
-- **Install**: `npm i -g @openai/codex` (Node.js 22+ LTS, built in Rust). Git 2.23+ recommended.
+- **Install**: `npm i -g @openai/codex@<pinned-version>` (Node.js 22+ LTS, built in Rust). Git 2.23+ recommended.
 - **Auth**: OpenAI API key or ChatGPT Plus/Pro/Business/Edu/Enterprise subscription
 - **OS**: macOS 12+, Ubuntu 20.04+/Debian 10+, Windows 11 via WSL 2 (experimental native Windows with elevated/unelevated sandbox modes)
 - **Resources**: 4 GB RAM min (8 GB recommended), minimal local overhead. Known issue: heavy concurrent sessions can cause memory pressure.
@@ -312,9 +312,15 @@ jobs:
 When GHA minutes become a bottleneck:
 
 ```yaml
-# One-line change per job:
+# One-line change per job (example):
+
+# job: test-linux
 runs-on: depot-ubuntu-latest  # was: ubuntu-latest
+
+# job: test-macos
 runs-on: depot-macos-latest   # was: macos-latest
+
+# job: test-windows
 runs-on: depot-windows-latest # was: windows-latest
 ```
 
@@ -322,7 +328,7 @@ runs-on: depot-windows-latest # was: windows-latest
 
 The complete 18-cell matrix with live agent invocations:
 
-```
+```text
 3 OSes x 3 Agents x 2 Python versions = 18 cells
 ```
 
