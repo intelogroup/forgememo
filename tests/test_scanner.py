@@ -22,9 +22,10 @@ from forgememo.storage import get_conn, init_db
 
 @pytest.fixture(autouse=True)
 def isolated_db(tmp_path, monkeypatch):
-    """Each test gets its own SQLite DB."""
+    """Each test gets its own SQLite DB and a writable log file."""
     db_file = tmp_path / "scanner_test.db"
     monkeypatch.setattr(storage_module, "DB_PATH", db_file)
+    monkeypatch.setattr(scanner, "LOG_FILE", tmp_path / "daily_scan.log")
     init_db()
 
 

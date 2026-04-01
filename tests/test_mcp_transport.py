@@ -18,6 +18,7 @@ class _Resp:
         return self._payload
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix socket not supported on Windows")
 def test_daemon_get_uses_socket_when_available(monkeypatch):
     called = {}
 
@@ -63,6 +64,7 @@ def test_daemon_get_raises_when_no_transport(monkeypatch):
         mcp_server._daemon_get("/health")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix socket not supported on Windows")
 def test_daemon_post_uses_socket_when_available(monkeypatch):
     called = {}
 
