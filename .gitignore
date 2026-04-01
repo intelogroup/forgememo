@@ -47,9 +47,7 @@ daily_scan.log
 node_modules/
 e2e/
 
-# Tests (internal)
-test_*.py
-tests/
+# Internal server tests only
 server/tests/
 
 # Webapp (not public yet)
