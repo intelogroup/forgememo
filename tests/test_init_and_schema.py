@@ -316,3 +316,103 @@ class TestSchemaColumns:
         for col in ("id", "ts", "session_id", "project_id", "source_tool",
                     "request", "investigation", "learnings", "next_steps", "concepts"):
             assert col in cols, f"session_summaries missing column: {col}"
+
+
+# ---------------------------------------------------------------------------
+# Hook + MCP registration — absolute-path fix (stop hook "command not found")
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterHooksAbsPath:
+    """Hooks must use the absolute binary path so Claude Code's restricted
+    shell can find forgememo without $PATH tricks."""
+
+    def _read_settings(self, path):
+        import json
+        return json.loads(path.read_text())
+
+    def test_hooks_use_absolute_path(self, tmp_path, monkeypatch):
+        from forgememo.commands._shared import _register_hooks
+
+        fake_bin = "/usr/local/bin/forgememo"
+        monkeypatch.setattr("shutil.which", lambda _: fake_bin)
+
+        settings = tmp_path / "settings.json"
+        _register_hooks(settings)
+
+        data = self._read_settings(settings)
+        for event in ("UserPromptSubmit", "Stop", "PostToolUse"):
+            cmd = data["hooks"][event][0]["hooks"][0]["command"]
+            assert cmd == f"{fake_bin} hook {event}", (
+                f"{event} hook should use absolute path, got: {cmd!r}"
+            )
+
+    def test_hooks_migrate_bare_name_to_absolute(self, tmp_path, monkeypatch):
+        """Existing bare 'forgememo hook X' entries must be updated on re-init."""
+        import json
+        from forgememo.commands._shared import _register_hooks
+
+        fake_bin = "/home/user/.local/bin/forgememo"
+        monkeypatch.setattr("shutil.which", lambda _: fake_bin)
+
+        # Pre-populate with old bare-name registration
+        old = {
+            "hooks": {
+                event: [{"hooks": [{"type": "command", "command": f"forgememo hook {event}"}]}]
+                for event in ("UserPromptSubmit", "Stop", "PostToolUse")
+            }
+        }
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps(old))
+
+        changed = _register_hooks(settings)
+        assert changed, "should have migrated bare-name commands"
+
+        data = self._read_settings(settings)
+        for event in ("UserPromptSubmit", "Stop", "PostToolUse"):
+            cmd = data["hooks"][event][0]["hooks"][0]["command"]
+            assert cmd == f"{fake_bin} hook {event}"
+
+    def test_hooks_idempotent_when_already_absolute(self, tmp_path, monkeypatch):
+        """No write if the absolute path is already registered."""
+        import json
+        from forgememo.commands._shared import _register_hooks
+
+        fake_bin = "/usr/local/bin/forgememo"
+        monkeypatch.setattr("shutil.which", lambda _: fake_bin)
+
+        settings = tmp_path / "settings.json"
+        _register_hooks(settings)
+        mtime1 = settings.stat().st_mtime
+
+        changed = _register_hooks(settings)
+        assert not changed
+        assert settings.stat().st_mtime == mtime1
+
+    def test_mcp_uses_absolute_path(self, tmp_path, monkeypatch):
+        from forgememo.commands._shared import _register_mcp
+
+        fake_bin = "/usr/local/bin/forgememo"
+        monkeypatch.setattr("shutil.which", lambda _: fake_bin)
+
+        settings = tmp_path / "settings.json"
+        _register_mcp(settings)
+
+        data = self._read_settings(settings)
+        assert data["mcpServers"]["forgememo"]["command"] == fake_bin
+
+    def test_mcp_migrates_bare_name(self, tmp_path, monkeypatch):
+        import json
+        from forgememo.commands._shared import _register_mcp
+
+        fake_bin = "/usr/local/bin/forgememo"
+        monkeypatch.setattr("shutil.which", lambda _: fake_bin)
+
+        old = {"mcpServers": {"forgememo": {"command": "forgememo", "args": ["mcp"]}}}
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps(old))
+
+        changed = _register_mcp(settings)
+        assert changed
+        data = self._read_settings(settings)
+        assert data["mcpServers"]["forgememo"]["command"] == fake_bin

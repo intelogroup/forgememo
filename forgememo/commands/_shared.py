@@ -124,12 +124,20 @@ def _format_context_markdown(
     return "\n".join(lines)
 
 
+def _forgememo_bin() -> str:
+    """Return the absolute path to the forgememo binary, or bare name as fallback."""
+    import shutil
+    return shutil.which("forgememo") or "forgememo"
+
+
 def _register_mcp(settings_path: Path) -> bool:
     """Idempotently add forgememo to ~/.claude/settings.json mcpServers."""
+    bin_path = _forgememo_bin()
     data = json.loads(settings_path.read_text()) if settings_path.exists() else {}
     servers = data.setdefault("mcpServers", {})
-    if "forgememo" not in servers:
-        servers["forgememo"] = {"command": "forgememo", "args": ["mcp"]}
+    existing_cmd = servers.get("forgememo", {}).get("command", "")
+    if "forgememo" not in servers or (existing_cmd == "forgememo" and bin_path != "forgememo"):
+        servers["forgememo"] = {"command": bin_path, "args": ["mcp"]}
         try:
             settings_path.parent.mkdir(parents=True, exist_ok=True)
             settings_path.write_text(json.dumps(data, indent=2))
@@ -143,20 +151,33 @@ def _register_mcp(settings_path: Path) -> bool:
 
 
 def _register_hooks(settings_path: Path) -> bool:
-    """Idempotently add UserPromptSubmit + Stop + PostToolUse hooks."""
+    """Idempotently add UserPromptSubmit + Stop + PostToolUse hooks.
+
+    Uses the absolute path to the forgememo binary so hooks work in Claude
+    Code's restricted shell environment where $PATH may not include pip/pipx
+    install directories.  Migrates existing bare-name registrations on re-init.
+    """
+    bin_path = _forgememo_bin()
     data = json.loads(settings_path.read_text()) if settings_path.exists() else {}
     hooks = data.setdefault("hooks", {})
     changed = False
     for event in ("UserPromptSubmit", "Stop", "PostToolUse"):
+        want_cmd = f"{bin_path} hook {event}"
         existing = hooks.get(event, [])
-        already = any(
-            h.get("hooks", [{}])[0].get("command", "").startswith("forgememo hook")
-            for h in existing
+        # Find existing entry (bare or absolute path)
+        match_idx = next(
+            (i for i, h in enumerate(existing)
+             if "forgememo hook" in h.get("hooks", [{}])[0].get("command", "")),
+            None,
         )
-        if not already:
+        if match_idx is None:
             hooks.setdefault(event, []).append(
-                {"hooks": [{"type": "command", "command": f"forgememo hook {event}"}]}
+                {"hooks": [{"type": "command", "command": want_cmd}]}
             )
+            changed = True
+        elif existing[match_idx]["hooks"][0]["command"] != want_cmd:
+            # Migrate bare 'forgememo hook X' → absolute path
+            existing[match_idx]["hooks"][0]["command"] = want_cmd
             changed = True
     if changed:
         try:
