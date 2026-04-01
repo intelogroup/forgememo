@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-04-01
+
+### Added
+- `forgememo config -i` / `--interactive` flag — opens the provider picker directly without the table+confirm step; lets agents surface the exact command for users to run when switching providers mid-session
+- All three skill files (claude.md v5, gemini.md v6, codex.json v4) now include a `## Switching Providers` section teaching agents to run `forgememo config -i` and relay the output to the user
+- `forgememo status` provider row now shows `(switch: forgememo config -i)` hint inline
+
+### Changed
+- Non-TTY `_prompt_provider_setup` message simplified to a single actionable line: "Provider picker requires a real terminal. Ask the user to run: forgememo config -i"
+
 ## [0.4.0] — 2026-04-01
 
 ### Cross-agent session hooks
