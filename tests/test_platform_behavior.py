@@ -7,6 +7,8 @@ import os
 import sys
 import tempfile
 
+import pytest
+
 from rich.console import Console
 
 import forgememo.config as config
@@ -218,6 +220,11 @@ class TestSessionRecall:
 
         return _get
 
+    @pytest.fixture(autouse=True)
+    def _daemon_up(self, monkeypatch):
+        """Assume daemon is healthy for all recall tests unless overridden."""
+        monkeypatch.setattr(hook, "_ensure_daemon", lambda: True)
+
     def test_empty_db_outputs_empty_context(self, monkeypatch, capsys):
         """Empty DB should emit hookSpecificOutput with empty additionalContext."""
         monkeypatch.setattr(
@@ -342,15 +349,15 @@ class TestSessionRecall:
         data = json.loads(out)
         assert "Auth pattern" in data["hookSpecificOutput"]["additionalContext"]
 
-    def test_daemon_failure_outputs_empty_context(self, monkeypatch, capsys):
-        """If daemon is unreachable, gracefully emit empty context (not an error)."""
-        monkeypatch.setattr(hook, "_daemon_get", self._fake_daemon_get({}))
+    def test_daemon_failure_outputs_actionable_message(self, monkeypatch, capsys):
+        """If daemon is unreachable, emit an actionable message (not an error exit)."""
+        monkeypatch.setattr(hook, "_ensure_daemon", lambda: False)
         monkeypatch.setattr(hook, "SOURCE_TOOL", "claude-code")
         rc = hook._handle_session_recall({"cwd": "/proj"}, "UserPromptSubmit")
         out = capsys.readouterr().out
         assert rc == 0
         data = json.loads(out)
-        assert data["hookSpecificOutput"]["additionalContext"] == ""
+        assert "forgememo start" in data["hookSpecificOutput"]["additionalContext"]
 
 
 # ---------------------------------------------------------------------------
