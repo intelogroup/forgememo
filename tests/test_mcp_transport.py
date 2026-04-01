@@ -28,9 +28,8 @@ def test_daemon_get_uses_socket_when_available(monkeypatch):
             return _Resp(payload={"ok": True})
 
     def fake_http_get(url, params=None, timeout=5):
-        raise AssertionError(
-            "HTTP fallback should not be used when socket is available"
-        )
+        called["http_url"] = url
+        return _Resp(payload={"ok": True})
 
     monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
     # On Windows, socket is skipped and HTTP is used - mock both for cross-platform test
@@ -39,11 +38,15 @@ def test_daemon_get_uses_socket_when_available(monkeypatch):
 
     data = mcp_server._daemon_get("/health", params={"a": "b"})
     assert data["ok"] is True
-    # On Windows (sys.platform == "win32"), socket is skipped, so URL will be HTTP
+    # On Windows (sys.platform == "win32"), socket is skipped, so HTTP is used
     # On POSIX, socket is used and URL will be http+unix://
     if sys.platform == "win32":
-        assert called["url"].startswith("http://127.0.0.1:")
+        assert "http_url" in called, (
+            "On Windows, HTTP should be used when socket is skipped"
+        )
+        assert called["http_url"].startswith("http://127.0.0.1:")
     else:
+        assert "url" in called, "On POSIX, socket should be used"
         assert called["url"].startswith("http+unix://")
 
 
@@ -84,9 +87,8 @@ def test_daemon_post_uses_socket_when_available(monkeypatch):
             return _Resp(payload={"ok": True})
 
     def fake_http_post(url, json=None, timeout=5):
-        raise AssertionError(
-            "HTTP fallback should not be used when socket is available"
-        )
+        called["http_url"] = url
+        return _Resp(payload={"ok": True})
 
     monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
     # On Windows, socket is skipped and HTTP is used - mock both for cross-platform test
@@ -95,11 +97,15 @@ def test_daemon_post_uses_socket_when_available(monkeypatch):
 
     data = mcp_server._daemon_post("/events", payload={"a": 1})
     assert data["ok"] is True
-    # On Windows (sys.platform == "win32"), socket is skipped, so URL will be HTTP
+    # On Windows (sys.platform == "win32"), socket is skipped, so HTTP is used
     # On POSIX, socket is used and URL will be http+unix://
     if sys.platform == "win32":
-        assert called["url"].startswith("http://127.0.0.1:")
+        assert "http_url" in called, (
+            "On Windows, HTTP should be used when socket is skipped"
+        )
+        assert called["http_url"].startswith("http://127.0.0.1:")
     else:
+        assert "url" in called, "On POSIX, socket should be used"
         assert called["url"].startswith("http+unix://")
 
 
