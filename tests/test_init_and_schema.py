@@ -375,7 +375,6 @@ class TestRegisterHooksAbsPath:
 
     def test_hooks_idempotent_when_already_absolute(self, tmp_path, monkeypatch):
         """No write if the absolute path is already registered."""
-        import json
         from forgememo.commands._shared import _register_hooks
 
         fake_bin = "/usr/local/bin/forgememo"
