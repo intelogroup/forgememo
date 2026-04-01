@@ -11,11 +11,13 @@ Logs to ~/Developer/Forgememo/daily_scan.log
 
 import argparse
 import contextlib
-import fcntl
 import hashlib
 import json
 import subprocess
 import sys
+
+if sys.platform != "win32":
+    import fcntl
 import time
 from datetime import datetime
 from pathlib import Path
@@ -374,7 +376,8 @@ def locked_hashes():
     Prevents duplicate processing if two daily_scan.py processes run concurrently."""
     HASH_FILE.touch(exist_ok=True)
     with open(HASH_FILE, "r+") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
+        if sys.platform != "win32":
+            fcntl.flock(fh, fcntl.LOCK_EX)
         try:
             fh.seek(0)
             raw = fh.read().strip()
@@ -384,7 +387,8 @@ def locked_hashes():
             fh.truncate()
             json.dump(hashes, fh, indent=2)
         finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            if sys.platform != "win32":
+                fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 def md5(text: str) -> str:

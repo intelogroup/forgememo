@@ -386,11 +386,11 @@ def _configure_provider_noninteractive(provider: str) -> None:
         )
 
 
-def _prompt_provider_setup(yes: bool) -> None:
-    """If no provider is configured, require interactive provider selection."""
+def _prompt_provider_setup(yes: bool, force: bool = False) -> None:
+    """Interactive provider selection. Skips if already configured unless force=True."""
     from forgememo import config as fm_cfg
 
-    if fm_cfg.load().get("provider") is not None:
+    if fm_cfg.load().get("provider") is not None and not force:
         return  # already configured (e.g. Ollama was just set above)
 
     # Non-interactive mode: warn visibly and skip
@@ -825,33 +825,76 @@ def start(
 def stop():
     """Unload the LaunchAgent and optionally remove the plist."""
     if sys.platform == "linux":
-        _stop_r = subprocess.run(
-            ["systemctl", "--user", "stop", "forgememo-daemon", "forgememo-worker"],
-            check=False, capture_output=True, text=True,
-        )
-        _dis_r = subprocess.run(
-            ["systemctl", "--user", "disable", "forgememo-daemon", "forgememo-worker"],
-            check=False, capture_output=True, text=True,
-        )
-        if _stop_r.returncode == 0:
+        def _run_systemctl(*args):
+            try:
+                return subprocess.run(
+                    ["systemctl", "--user", *args],
+                    check=False, capture_output=True, text=True, timeout=10,
+                )
+            except subprocess.TimeoutExpired:
+                return None
+
+        _stop_r = _run_systemctl("stop", "forgememo-daemon", "forgememo-worker")
+        _dis_r = _run_systemctl("disable", "forgememo-daemon", "forgememo-worker")
+
+        if _stop_r is None:
+            console.print("[yellow]systemctl stop timed out — killing process directly[/]")
+            subprocess.run(["pkill", "-f", "forgememo.*daemon"], check=False)
+        elif _stop_r.returncode == 0:
             console.print("[green]forgememo-daemon and forgememo-worker stopped.[/]")
         else:
+            subprocess.run(["pkill", "-f", "forgememo.*daemon"], check=False)
             console.print(f"[yellow]stop failed:[/] {_stop_r.stderr.strip()}")
-        if _dis_r.returncode == 0:
+
+        if _dis_r is not None and _dis_r.returncode == 0:
             console.print("[green]services disabled.[/]")
+
         systemd_dir = Path.home() / ".config" / "systemd" / "user"
-        remove = typer.confirm("Remove unit files?", default=False)
+        if sys.stdin.isatty():
+            remove = typer.confirm("Remove unit files?", default=False)
+        else:
+            remove = False
         if remove:
             for name in ("forgememo-daemon.service", "forgememo-worker.service"):
                 p = systemd_dir / name
                 if p.exists():
                     p.unlink()
                     console.print(f"[dim]removed[/] {p}")
-            subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+            _run_systemctl("daemon-reload")
+        raise typer.Exit(0)
+
+    if sys.platform == "win32":
+        import socket as _sock
+
+        http_port = os.environ.get("FORGEMEMO_HTTP_PORT", "5555")
+        try:
+            with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as _s:
+                _s.settimeout(1)
+                alive = _s.connect_ex(("127.0.0.1", int(http_port))) == 0
+        except Exception:
+            alive = False
+        if alive:
+            # Find and kill daemon/worker processes
+            result = subprocess.run(
+                ["taskkill", "/f", "/im", "forgememo.exe"],
+                capture_output=True, text=True, check=False,
+            )
+            if result.returncode == 0:
+                console.print("[green]Forgememo processes stopped.[/]")
+            else:
+                console.print(f"[yellow]Could not stop processes:[/] {result.stderr.strip()}")
+        else:
+            console.print("[dim]Daemon not running.[/]")
+        # Remove scheduled tasks
+        for tn in ("Forgememo Daemon", "Forgememo Worker"):
+            subprocess.run(
+                ["schtasks", "/delete", "/tn", tn, "/f"],
+                capture_output=True, text=True, check=False,
+            )
         raise typer.Exit(0)
 
     if sys.platform != "darwin":
-        console.print("[yellow]warning:[/] LaunchAgent is macOS only.")
+        console.print(f"[yellow]Unsupported platform '{sys.platform}'.[/] Kill the daemon process manually.")
         raise typer.Exit(0)
 
     if not PLIST_PATH.exists():
@@ -899,7 +942,10 @@ def stop():
                 f"[yellow]launchctl unload (worker) returned {worker_result.returncode}:[/] {worker_result.stderr.strip()}"
             )
 
-    remove = typer.confirm("Remove plist file(s)?", default=False)
+    if sys.stdin.isatty():
+        remove = typer.confirm("Remove plist file(s)?", default=False)
+    else:
+        remove = False
     if remove:
         PLIST_PATH.unlink(missing_ok=True)
         console.print(f"[dim]removed[/] {PLIST_PATH}")
@@ -952,6 +998,9 @@ def status(
     undistilled = conn.execute(
         "SELECT COUNT(*) FROM traces WHERE distilled=0"
     ).fetchone()[0]
+    e_total = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    ds_total = conn.execute("SELECT COUNT(*) FROM distilled_summaries").fetchone()[0]
+    ss_total = conn.execute("SELECT COUNT(*) FROM session_summaries").fetchone()[0]
     conn.close()
 
     provider = fm_cfg.get_provider() or "not set"
@@ -974,6 +1023,9 @@ def status(
 
         out = {
             "db": str(DB_PATH),
+            "events": e_total,
+            "distilled_summaries": ds_total,
+            "session_summaries": ss_total,
             "traces": t_total,
             "principles": p_total,
             "undistilled": undistilled,
@@ -989,6 +1041,9 @@ def status(
     table.add_column("value")
 
     table.add_row("DB", str(DB_PATH))
+    table.add_row("Events", str(e_total))
+    table.add_row("Distilled", str(ds_total))
+    table.add_row("Sessions", str(ss_total))
     table.add_row("Traces", str(t_total))
     table.add_row("Principles", str(p_total))
     undistilled_val = (
@@ -1010,10 +1065,45 @@ def status(
         else f"[yellow]{CROSS} not registered[/]  → run: [cyan]forgememo init[/]",
     )
 
-    skills_str = "  ".join(
-        f"[green]{a} {CHECK}[/]" if ok else f"[dim]{a} {CROSS}[/]"
-        for a, ok in skills_status.items()
+    # Check for stale skill files by comparing version headers
+    def _skill_version(path: Path) -> int | None:
+        if not path.exists():
+            return None
+        try:
+            first_line = path.read_text().splitlines()[0]
+            if "version" in first_line.lower():
+                import re
+                m = re.search(r"(\d+)", first_line)
+                return int(m.group(1)) if m else None
+        except Exception:
+            pass
+        return None
+
+    def _template_version(agent: str) -> int | None:
+        ext = "json" if agent == "codex" else "md"
+        t = SKILL_TEMPLATES_DIR / f"{agent}.{ext}"
+        return _skill_version(t)
+
+    skills_parts = []
+    for a, ok in skills_status.items():
+        if ok:
+            installed_v = _skill_version(SKILL_PATHS[a])
+            template_v = _template_version(a)
+            if installed_v is not None and template_v is not None and installed_v < template_v:
+                skills_parts.append(f"[yellow]{a} {CHECK} (v{installed_v}→v{template_v})[/]")
+            else:
+                skills_parts.append(f"[green]{a} {CHECK}[/]")
+        else:
+            skills_parts.append(f"[dim]{a} {CROSS}[/]")
+    skills_str = "  ".join(skills_parts)
+    stale_skills = any(
+        skills_status[a] and _skill_version(SKILL_PATHS[a]) is not None
+        and _template_version(a) is not None
+        and _skill_version(SKILL_PATHS[a]) < _template_version(a)
+        for a in skills_status
     )
+    if stale_skills:
+        skills_str += "  → run: [cyan]forgememo skill update[/]"
     table.add_row("Skills", skills_str)
 
     # Daemon / service status — check both install state and live socket
@@ -1095,6 +1185,185 @@ def status(
 
 
 @app.command()
+def doctor():
+    """Run end-to-end self-test: DB, daemon, write, search, MCP."""
+    import time
+    import uuid
+
+    from forgememo.storage import DB_PATH
+
+    checks_passed = 0
+    checks_failed = 0
+
+    def _pass(msg: str):
+        nonlocal checks_passed
+        checks_passed += 1
+        console.print(f"  [green]{CHECK}[/] {msg}")
+
+    def _fail(msg: str):
+        nonlocal checks_failed
+        checks_failed += 1
+        console.print(f"  [red]{CROSS}[/] {msg}")
+
+    console.print("[bold]Forgememo Doctor[/]\n")
+
+    # 1. DB exists
+    if DB_PATH.exists():
+        _pass(f"DB exists: {DB_PATH}")
+    else:
+        _fail(f"DB not found: {DB_PATH} — run: forgememo init")
+        raise typer.Exit(1)
+
+    # 2. DB schema check
+    from forgememo.storage import get_conn
+
+    conn = get_conn()
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    required_tables = {"events", "distilled_summaries", "session_summaries"}
+    missing_tables = required_tables - tables
+    conn.close()
+    if not missing_tables:
+        _pass(f"DB schema OK (tables: {', '.join(sorted(required_tables))})")
+    else:
+        _fail(f"Missing tables: {', '.join(sorted(missing_tables))} — run: forgememo init")
+
+    # 3. Daemon reachable
+    import tempfile as _tempfile
+
+    daemon_url = None
+    if sys.platform == "win32":
+        http_port = os.environ.get("FORGEMEMO_HTTP_PORT", "5555")
+        daemon_url = f"http://127.0.0.1:{http_port}"
+    elif os.environ.get("FORGEMEMO_DAEMON_URL"):
+        daemon_url = os.environ["FORGEMEMO_DAEMON_URL"]
+    elif os.environ.get("FORGEMEMO_HTTP_PORT"):
+        daemon_url = f"http://127.0.0.1:{os.environ['FORGEMEMO_HTTP_PORT']}"
+    else:
+        socket_path = os.environ.get(
+            "FORGEMEMO_SOCKET", os.path.join(_tempfile.gettempdir(), "forgememo.sock")
+        )
+        if Path(socket_path).exists():
+            daemon_url = "socket"  # marker
+        else:
+            daemon_url = None
+
+    daemon_alive = False
+    if daemon_url and daemon_url != "socket":
+        try:
+            import requests as _req
+
+            resp = _req.get(f"{daemon_url}/health", timeout=3)
+            daemon_alive = resp.ok and resp.json().get("ok")
+        except Exception:
+            pass
+    elif daemon_url == "socket":
+        try:
+            import requests_unixsocket
+
+            sess = requests_unixsocket.Session()
+            socket_path = os.environ.get(
+                "FORGEMEMO_SOCKET", os.path.join(_tempfile.gettempdir(), "forgememo.sock")
+            )
+            sock_url = "http+unix://" + socket_path.replace("/", "%2F")
+            resp = sess.get(f"{sock_url}/health", timeout=3)
+            daemon_alive = resp.ok and resp.json().get("ok")
+            daemon_url = f"unix://{socket_path}"
+        except Exception:
+            pass
+
+    if daemon_alive:
+        _pass(f"Daemon reachable at {daemon_url}")
+    else:
+        _fail("Daemon not reachable — run: forgememo start")
+        console.print(f"\n  [bold]{checks_passed} passed, {checks_failed} failed[/]")
+        console.print("  [dim]Fix daemon connectivity before running write/search tests.[/]")
+        raise typer.Exit(1)
+
+    # 4. Write probe event
+    probe_id = f"doctor-{uuid.uuid4().hex[:8]}"
+    probe_payload = {"message": f"doctor probe {probe_id}"}
+    try:
+        import requests as _req
+
+        if daemon_url.startswith("unix://"):
+            import requests_unixsocket
+
+            sess = requests_unixsocket.Session()
+            socket_path = daemon_url.replace("unix://", "")
+            sock_url = "http+unix://" + socket_path.replace("/", "%2F")
+            resp = sess.post(
+                f"{sock_url}/events",
+                json={
+                    "session_id": probe_id,
+                    "project_id": probe_id,
+                    "source_tool": "doctor",
+                    "event_type": "doctor_probe",
+                    "tool_name": None,
+                    "payload": probe_payload,
+                    "seq": int(time.time() * 1000),
+                },
+                timeout=5,
+            )
+        else:
+            resp = _req.post(
+                f"{daemon_url}/events",
+                json={
+                    "session_id": probe_id,
+                    "project_id": probe_id,
+                    "source_tool": "doctor",
+                    "event_type": "doctor_probe",
+                    "tool_name": None,
+                    "payload": probe_payload,
+                    "seq": int(time.time() * 1000),
+                },
+                timeout=5,
+            )
+        if resp.status_code == 201:
+            _pass("Event write OK (POST /events -> 201)")
+        else:
+            _fail(f"Event write unexpected status {resp.status_code}: {resp.text[:100]}")
+    except Exception as e:
+        _fail(f"Event write failed: {e}")
+
+    # 5. Search for probe event
+    try:
+        if daemon_url.startswith("unix://"):
+            resp = sess.get(f"{sock_url}/search", params={"q": probe_id}, timeout=5)
+        else:
+            resp = _req.get(f"{daemon_url}/search", params={"q": probe_id}, timeout=5)
+        results = resp.json().get("results", [])
+        event_found = any(r.get("id", "").startswith("e:") for r in results)
+        if event_found:
+            _pass("Event search OK (event found via /search)")
+        else:
+            _fail("Event search FAILED — event was written but /search returned no e: results")
+    except Exception as e:
+        _fail(f"Event search failed: {e}")
+
+    # 6. MCP registration
+    settings_path = Path.home() / ".claude" / "settings.json"
+    mcp_ok = False
+    if settings_path.exists():
+        try:
+            data = json.loads(settings_path.read_text())
+            mcp_ok = "forgememo" in data.get("mcpServers", {})
+        except Exception:
+            pass
+    if mcp_ok:
+        _pass("MCP registered in ~/.claude/settings.json")
+    else:
+        _fail("MCP not registered — run: forgememo init")
+
+    # Summary
+    console.print(f"\n  [bold]{checks_passed} passed, {checks_failed} failed[/]")
+    if checks_failed == 0:
+        console.print("  [green]All checks passed![/]")
+    else:
+        console.print("  [yellow]Some checks failed. See above for details.[/]")
+        raise typer.Exit(1)
+
+
+@app.command()
 def search(
     query: str,
     k: int = typer.Option(5, help="Max results"),
@@ -1142,6 +1411,46 @@ def store(
         tags=None,
     )
     cmd_save(args)
+
+
+@app.command()
+def logs(
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output (like tail -f)"),
+    worker: bool = typer.Option(False, "--worker", help="Show worker logs instead of daemon"),
+):
+    """Tail the daemon or worker log file."""
+    log_dir = Path.home() / ".forgememo" / "logs"
+
+    if worker:
+        log_file = log_dir / "forgememo_worker.log"
+    else:
+        log_file = log_dir / "forgememo_daemon.log"
+
+    if not log_file.exists():
+        console.print(f"[yellow]Log file not found:[/] {log_file}")
+        console.print("[dim]Start the daemon first: forgememo start[/]")
+        raise typer.Exit(1)
+
+    if follow:
+        console.print(f"[dim]Following {log_file} (Ctrl+C to stop)...[/]")
+        try:
+            proc = subprocess.run(
+                ["tail", "-f", "-n", str(lines), str(log_file)] if sys.platform != "win32"
+                else ["powershell", "-Command", f"Get-Content -Path '{log_file}' -Tail {lines} -Wait"],
+                check=False,
+            )
+        except KeyboardInterrupt:
+            pass
+    else:
+        try:
+            text = log_file.read_text(errors="replace")
+            tail = text.splitlines()[-lines:]
+            for line in tail:
+                console.print(line)
+        except Exception as e:
+            console.print(f"[red]error:[/] {e}")
+            raise typer.Exit(1)
 
 
 @app.command()
@@ -1225,6 +1534,12 @@ def config(
         if active == "ollama":
             tbl.add_row("Ollama URL", fm_cfg.get_ollama_url())
         console.print(Panel(tbl, title="Forgememo Config", expand=False))
+
+        # Offer interactive provider switch if running in a TTY
+        if sys.stdin.isatty() and not show:
+            switch = typer.confirm("\nSwitch provider?", default=False)
+            if switch:
+                _prompt_provider_setup(yes=False, force=True)
         return
 
     if provider not in fm_cfg.SUPPORTED_PROVIDERS:
@@ -1763,6 +2078,8 @@ def help():
             f"  [cyan]forgememo export-context[/]   {_D} write agent context block (CLAUDE.md / AGENTS.md)\n\n"
             "[bold]Management:[/]\n"
             f"  [cyan]forgememo status[/]            {_D} DB stats, server health, skill status\n"
+            f"  [cyan]forgememo doctor[/]            {_D} end-to-end self-test (DB, daemon, write/search)\n"
+            f"  [cyan]forgememo logs[/]              {_D} tail daemon logs (--follow, --worker)\n"
             f"  [cyan]forgememo config[/]            {_D} set/view inference provider & model\n"
             f"  [cyan]forgememo auth[/]              {_D} login / logout / check API key status\n"
             f"  [cyan]forgememo skill generate[/]    {_D} regenerate agent skill files\n"

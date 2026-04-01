@@ -205,14 +205,14 @@ def search_memories(
 @mcp.tool()
 def get_memory_details(ids: list[str], workspace_root: str) -> str:
     """Full content for IDs from search_memories.
-    Prefixes: d: (distilled_summaries), s: (session_summaries), c: (compat/legacy principles).
+    Prefixes: d: (distilled_summaries), s: (session_summaries), c: (compat/legacy principles), e: (raw events).
     Raises ValueError on unknown prefixes."""
     _ = _resolve_project_id(workspace_root)
     blocks = []
     for id_str in ids:
         parts = id_str.split(":", 1)
-        if len(parts) != 2 or parts[0] not in {"d", "s", "c"}:
-            raise ValueError(f"Unknown ID prefix in '{id_str}'. Valid: d:, s:, c:")
+        if len(parts) != 2 or parts[0] not in {"d", "s", "c", "e"}:
+            raise ValueError(f"Unknown ID prefix in '{id_str}'. Valid: d:, s:, c:, e:")
         prefix, raw = parts[0], parts[1]
         data = _daemon_get(f"/observation/{prefix}/{int(raw)}")
         blocks.append(json.dumps(data, indent=2))

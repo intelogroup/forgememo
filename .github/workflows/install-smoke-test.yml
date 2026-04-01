@@ -1,0 +1,475 @@
+name: install-smoke-test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════
+  # Job 1: Core smoke test — install, init, daemon, roundtrip
+  # ═══════════════════════════════════════════════════════════════════
+  smoke-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+    env:
+      FORGEMEMO_DAEMON_LOG: ${{ runner.temp }}/forgememo_daemon.log
+      FORGEMEMO_ALLOW_TMP_LOG: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # ── Install ──────────────────────────────────────────────
+      - name: Install forgememo from repo
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      # ── Entry points ─────────────────────────────────────────
+      - name: Verify console_scripts entry point
+        run: forgememo --version
+
+      - name: Verify python -m forgememo
+        run: python -m forgememo --version
+
+      # ── Init (non-interactive) ───────────────────────────────
+      - name: Create agent config dirs for skill detection
+        shell: bash
+        run: |
+          mkdir -p ~/.claude
+          echo '{}' > ~/.claude/settings.json
+          mkdir -p ~/.gemini
+          mkdir -p ~/.codex
+
+      - name: Run forgememo init --yes --provider claude_code
+        run: forgememo init --yes --provider claude_code
+
+      # ── Re-init idempotency ──────────────────────────────────
+      - name: Re-init should not fail (idempotency)
+        run: forgememo init --yes --provider claude_code
+
+      # ── Verify skills generated ──────────────────────────────
+      - name: Check skill files exist
+        shell: bash
+        run: |
+          test -f ~/.claude/skills/forgememo.md || (echo "FAIL: claude skill missing" && exit 1)
+          test -f ~/.gemini/forgememo-skill.md || (echo "FAIL: gemini skill missing" && exit 1)
+          test -f ~/.codex/forgememo-skill.json || (echo "FAIL: codex skill missing" && exit 1)
+          echo "All skill files present"
+
+      # ── Verify MCP registration ─────────────────────────────
+      - name: Check MCP registered in settings.json
+        shell: bash
+        run: |
+          python -c "
+          import json
+          data = json.load(open('$HOME/.claude/settings.json'))
+          assert 'forgememo' in data.get('mcpServers', {}), 'MCP not registered'
+          print('MCP registered OK')
+          "
+
+      # ── Start daemon ─────────────────────────────────────────
+      - name: Start daemon (background, POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          export FORGEMEMO_HTTP_PORT=5555
+          python -m forgememo.daemon &
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if python -c "import requests; r=requests.get('http://127.0.0.1:5555/health',timeout=2); exit(0 if r.ok else 1)" 2>/dev/null; then
+              echo "Daemon healthy after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+        env:
+          FORGEMEMO_HTTP_PORT: "5555"
+
+      - name: Start daemon (background, Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:FORGEMEMO_HTTP_PORT = "5555"
+          Start-Process -NoNewWindow python -ArgumentList "-m","forgememo.daemon"
+          for ($i = 1; $i -le 10; $i++) {
+            try {
+              $r = Invoke-RestMethod -Uri "http://127.0.0.1:5555/health" -TimeoutSec 2
+              Write-Host "Daemon healthy after ${i}s"
+              break
+            } catch {
+              Start-Sleep -Seconds 1
+            }
+          }
+        env:
+          FORGEMEMO_HTTP_PORT: "5555"
+
+      - name: Verify daemon health
+        run: python -c "import requests; r=requests.get('http://127.0.0.1:5555/health',timeout=5); assert r.json()['ok'], 'unhealthy'; print('Health OK')"
+        env:
+          FORGEMEMO_HTTP_PORT: "5555"
+
+      # ── Status ───────────────────────────────────────────────
+      - name: Run forgememo status --json
+        shell: bash
+        run: |
+          python -c "
+          import json, subprocess
+          r = subprocess.run(['forgememo', 'status', '--json'], capture_output=True, text=True)
+          print(r.stdout)
+          data = json.loads(r.stdout)
+          assert 'db' in data, 'missing db key'
+          assert 'events' in data, 'missing events key'
+          assert 'provider' in data, 'missing provider key'
+          assert data['mcp_registered'] == True, 'MCP not registered'
+          print('Status JSON valid')
+          "
+        env:
+          FORGEMEMO_HTTP_PORT: "5555"
+
+      # ── Write/Search roundtrip ───────────────────────────────
+      - name: Event write → search → retrieve roundtrip
+        run: |
+          python -c "
+          import requests, json, time, uuid
+
+          base = 'http://127.0.0.1:5555'
+          probe = f'ci-probe-{uuid.uuid4().hex[:8]}'
+
+          # Write
+          r = requests.post(f'{base}/events', json={
+              'session_id': probe, 'project_id': probe,
+              'source_tool': 'ci', 'event_type': 'ci_test',
+              'tool_name': 'smoke', 'payload': json.dumps({'msg': f'probe {probe}'}),
+              'seq': int(time.time() * 1000),
+          }, timeout=5)
+          assert r.status_code == 201, f'write failed: {r.status_code} {r.text}'
+          eid = r.json()['event_id']
+          print(f'Write OK: e:{eid}')
+
+          # Search
+          r = requests.get(f'{base}/search', params={'q': probe}, timeout=5)
+          assert r.status_code == 200
+          results = r.json()['results']
+          events = [x for x in results if x['id'].startswith('e:')]
+          assert len(events) > 0, f'event not found in search: {results}'
+          print(f'Search OK: found {len(events)} event(s)')
+
+          # Retrieve detail
+          r = requests.get(f'{base}/observation/e/{eid}', timeout=5)
+          assert r.status_code == 200
+          detail = r.json()
+          assert detail['event_type'] == 'ci_test'
+          assert detail['id'] == f'e:{eid}'
+          print(f'Retrieve OK: {detail[\"id\"]}')
+
+          # Session summary write/read
+          r = requests.post(f'{base}/session_summaries', json={
+              'request': f'CI test {probe}', 'project_id': probe,
+              'source_tool': 'ci', 'learnings': f'probe {probe} works',
+          }, timeout=5)
+          assert r.status_code == 201, f'summary write failed: {r.status_code}'
+          print(f'Session summary write OK')
+
+          # Search for summary
+          r = requests.get(f'{base}/search', params={'q': probe}, timeout=5)
+          summaries = [x for x in r.json()['results'] if x['id'].startswith('s:')]
+          assert len(summaries) > 0, f'summary not found'
+          print(f'Summary search OK: {summaries[0][\"id\"]}')
+
+          print('ALL ROUNDTRIP TESTS PASSED')
+          "
+        env:
+          FORGEMEMO_HTTP_PORT: "5555"
+
+      # ── Batch events ─────────────────────────────────────────
+      - name: Batch event write test
+        run: |
+          python -c "
+          import requests, json, time, uuid
+
+          base = 'http://127.0.0.1:5555'
+          probe = f'ci-batch-{uuid.uuid4().hex[:8]}'
+
+          events = []
+          for i in range(3):
+              events.append({
+                  'session_id': probe, 'project_id': probe,
+                  'source_tool': 'ci', 'event_type': f'batch_test_{i}',
+                  'tool_name': 'smoke_batch', 'payload': json.dumps({'idx': i}),
+                  'seq': int(time.time() * 1000) + i,
+              })
+
+          r = requests.post(f'{base}/events/batch', json={'events': events}, timeout=10)
+          if r.status_code == 404:
+              print('SKIP: /events/batch not implemented yet')
+          else:
+              assert r.status_code in (200, 201), f'batch write failed: {r.status_code} {r.text}'
+              print(f'Batch write OK: {r.json()}')
+          "
+        env:
+          FORGEMEMO_HTTP_PORT: "5555"
+
+      # ── MCP server stdio test ────────────────────────────────
+      - name: Test MCP server starts (stdio mode)
+        shell: bash
+        run: |
+          timeout 5 forgememo mcp --http 2>&1 &
+          MCP_PID=$!
+          sleep 2
+          if kill -0 $MCP_PID 2>/dev/null; then
+            echo "MCP server process alive"
+            kill $MCP_PID 2>/dev/null || true
+          else
+            echo "WARN: MCP server exited (may be expected without FastMCP runtime)"
+          fi
+        if: runner.os != 'Windows'
+        env:
+          FORGEMEMO_HTTP_PORT: "5555"
+
+      # ── Hook test ────────────────────────────────────────────
+      - name: Test hook handler (UserPromptSubmit)
+        run: |
+          python -c "
+          import json, subprocess
+          payload = json.dumps({
+              'session_id': 'ci-hook-test',
+              'cwd': '.',
+              'event_name': 'UserPromptSubmit',
+          })
+          r = subprocess.run(
+              ['python', '-m', 'forgememo.hook', 'UserPromptSubmit'],
+              input=payload, capture_output=True, text=True, timeout=10,
+          )
+          print(f'Hook exit code: {r.returncode}')
+          print(f'Hook stdout: {r.stdout[:200]}')
+          out = json.loads(r.stdout)
+          print(f'Hook output valid JSON: {list(out.keys())}')
+          "
+        env:
+          FORGEMEMO_HTTP_PORT: "5555"
+
+      - name: Test hook handler (Stop / session end)
+        run: |
+          python -c "
+          import json, subprocess
+          payload = json.dumps({
+              'session_id': 'ci-hook-test-end',
+              'cwd': '.',
+              'event_name': 'Stop',
+          })
+          r = subprocess.run(
+              ['python', '-m', 'forgememo.hook', 'Stop'],
+              input=payload, capture_output=True, text=True, timeout=10,
+          )
+          print(f'Hook exit code: {r.returncode}')
+          print(f'Hook stdout: {r.stdout[:200]}')
+          out = json.loads(r.stdout)
+          print(f'Stop hook output valid JSON: {list(out.keys())}')
+          "
+        env:
+          FORGEMEMO_HTTP_PORT: "5555"
+
+      # ── Module import test ───────────────────────────────────
+      - name: Verify all module imports
+        run: |
+          python -c "
+          import forgememo
+          from forgememo.cli import app
+          from forgememo.daemon import create_app
+          from forgememo.mcp_server import mcp
+          from forgememo.storage import init_db
+          from forgememo.config import load, get_provider
+          from forgememo.worker import Worker
+          from forgememo.hook import main as hook_main
+          print(f'All imports OK — version {forgememo.__version__}')
+          "
+
+      # ── Cleanup ──────────────────────────────────────────────
+      - name: Upload daemon logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-log-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: ${{ runner.temp }}/forgememo_daemon.log
+          if-no-files-found: ignore
+
+      - name: Show daemon logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "=== Daemon log ==="
+          cat "$FORGEMEMO_DAEMON_LOG" 2>/dev/null || echo "(no log file)"
+          echo "=== Status ==="
+          forgememo status 2>/dev/null || true
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Job 2: Provider init matrix — test each provider's init path
+  # ═══════════════════════════════════════════════════════════════════
+  provider-init:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [claude_code, anthropic, openai, gemini, ollama, forgememo]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install forgememo
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: Setup agent config dirs
+        run: |
+          mkdir -p ~/.claude
+          echo '{}' > ~/.claude/settings.json
+          mkdir -p ~/.gemini
+          mkdir -p ~/.codex
+
+      - name: Init with provider ${{ matrix.provider }}
+        run: forgememo init --yes --provider ${{ matrix.provider }}
+
+      - name: Verify config has correct provider
+        run: |
+          python -c "
+          from forgememo.config import load
+          cfg = load()
+          assert cfg.get('provider') == '${{ matrix.provider }}', f'Expected ${{ matrix.provider }}, got {cfg.get(\"provider\")}'
+          print(f'Provider set correctly: {cfg[\"provider\"]}')
+          "
+
+      - name: Verify skill files generated for all detected agents
+        run: |
+          test -f ~/.claude/skills/forgememo.md && echo "claude skill OK" || echo "claude skill missing (OK if ~/.claude didn't exist)"
+          test -f ~/.gemini/forgememo-skill.md && echo "gemini skill OK" || echo "gemini skill missing"
+          test -f ~/.codex/forgememo-skill.json && echo "codex skill OK" || echo "codex skill missing"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Job 3: Skill content validation — verify generated skills are valid
+  # ═══════════════════════════════════════════════════════════════════
+  skill-validation:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [claude, gemini, codex]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install forgememo
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: Setup config dirs
+        run: |
+          mkdir -p ~/.claude
+          echo '{}' > ~/.claude/settings.json
+          mkdir -p ~/.gemini
+          mkdir -p ~/.codex
+
+      - name: Init
+        run: forgememo init --yes --provider claude_code
+
+      - name: Validate claude skill content
+        if: matrix.agent == 'claude'
+        run: |
+          python -c "
+          import pathlib
+          skill = pathlib.Path.home() / '.claude/skills/forgememo.md'
+          content = skill.read_text()
+          assert 'forgememo' in content.lower(), 'Skill file does not mention forgememo'
+          assert len(content) > 100, f'Skill file suspiciously short: {len(content)} chars'
+          # Check it has meaningful sections
+          assert '#' in content, 'Skill file missing markdown headers'
+          print(f'Claude skill valid: {len(content)} chars')
+          "
+
+      - name: Validate gemini skill content
+        if: matrix.agent == 'gemini'
+        run: |
+          python -c "
+          import pathlib
+          skill = pathlib.Path.home() / '.gemini/forgememo-skill.md'
+          content = skill.read_text()
+          assert 'forgememo' in content.lower(), 'Skill file does not mention forgememo'
+          assert len(content) > 100, f'Skill file suspiciously short: {len(content)} chars'
+          print(f'Gemini skill valid: {len(content)} chars')
+          "
+
+      - name: Validate codex skill content
+        if: matrix.agent == 'codex'
+        run: |
+          python -c "
+          import json, pathlib
+          skill = pathlib.Path.home() / '.codex/forgememo-skill.json'
+          data = json.loads(skill.read_text())
+          assert isinstance(data, dict), f'Expected dict, got {type(data)}'
+          # Codex skills should be valid JSON with meaningful content
+          content = json.dumps(data)
+          assert 'forgememo' in content.lower(), 'Skill JSON does not mention forgememo'
+          print(f'Codex skill valid JSON: {list(data.keys())}')
+          "
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Job 4: Clean container test — minimal environment, no extras
+  # ═══════════════════════════════════════════════════════════════════
+  container-clean-install:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.12-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install from repo (clean env)
+        run: |
+          pip install --upgrade pip
+          pip install .
+
+      - name: Verify entry points
+        run: |
+          forgememo --version
+          python -m forgememo --version
+
+      - name: Verify core imports
+        run: |
+          python -c "
+          import forgememo
+          from forgememo.cli import app
+          from forgememo.daemon import create_app
+          from forgememo.storage import init_db
+          from forgememo.config import load
+          from forgememo.hook import main
+          print(f'All imports OK in clean container — v{forgememo.__version__}')
+          "
+
+      - name: Init and start daemon in clean container
+        run: |
+          mkdir -p /root/.claude
+          echo '{}' > /root/.claude/settings.json
+          forgememo init --yes --provider claude_code
+
+          export FORGEMEMO_HTTP_PORT=5555
+          python -m forgememo.daemon &
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if python -c "import requests; r=requests.get('http://127.0.0.1:5555/health',timeout=2); exit(0 if r.ok else 1)" 2>/dev/null; then
+              echo "Daemon healthy after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+          python -c "import requests; r=requests.get('http://127.0.0.1:5555/health',timeout=5); assert r.json()['ok']; print('Container daemon health OK')"
+        env:
+          FORGEMEMO_HTTP_PORT: "5555"

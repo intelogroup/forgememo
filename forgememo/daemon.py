@@ -122,10 +122,10 @@ def _insert_event(
 def _parse_id(id_str: str) -> tuple[str, int]:
     parts = id_str.split(":", 1)
     if len(parts) != 2:
-        raise ValueError(f"Unknown ID prefix in '{id_str}'. Valid: d:, s:, c:")
+        raise ValueError(f"Unknown ID prefix in '{id_str}'. Valid: d:, s:, c:, e:")
     prefix, raw = parts[0], parts[1]
-    if prefix not in {"d", "s", "c"}:
-        raise ValueError(f"Unknown ID prefix in '{id_str}'. Valid: d:, s:, c:")
+    if prefix not in {"d", "s", "c", "e"}:
+        raise ValueError(f"Unknown ID prefix in '{id_str}'. Valid: d:, s:, c:, e:")
     n = int(raw)
     if prefix == "c" and n < 1_000_000:
         raise ValueError(f"Invalid c: ID '{id_str}' — compat IDs must be >= 1,000,000")
@@ -298,6 +298,37 @@ def create_app() -> Flask:
                         }
                     )
 
+                # Raw events
+                params = [q]
+                sql = (
+                    "SELECT e.id, e.ts, e.project_id, e.event_type, e.tool_name "
+                    "FROM events e "
+                    "WHERE e.id IN (SELECT rowid FROM events_fts WHERE events_fts MATCH ?) "
+                )
+                if project_id:
+                    sql += "AND e.project_id = ? "
+                    params.append(project_id)
+                if type_filter:
+                    sql += "AND e.event_type = ? "
+                    params.append(type_filter)
+                sql += "ORDER BY e.ts DESC LIMIT ?"
+                params.append(k)
+                rows = conn.execute(sql, params).fetchall()
+                for r in rows:
+                    title = r["event_type"]
+                    if r["tool_name"]:
+                        title = f"{title} ({r['tool_name']})"
+                    results.append(
+                        {
+                            "id": f"e:{r['id']}",
+                            "ts": r["ts"],
+                            "type": "event",
+                            "title": title,
+                            "impact_score": None,
+                            "project_id": r["project_id"],
+                        }
+                    )
+
                 # Compat principles (legacy)
                 try:
                     params = [q]
@@ -455,6 +486,33 @@ def create_app() -> Flask:
                         "narrative": row["principle"],
                         "impact_score": row["impact_score"],
                         "concepts": row["tags"],
+                    }
+                )
+            if prefix == "e":
+                row = conn.execute(
+                    "SELECT * FROM events WHERE id=?",
+                    (row_id,),
+                ).fetchone()
+                if not row:
+                    return jsonify({"error": "not_found"}), 404
+                payload = row["payload"]
+                try:
+                    payload = json.loads(payload) if payload else {}
+                except Exception:
+                    pass
+                return jsonify(
+                    {
+                        "id": f"e:{row_id}",
+                        "ts": row["ts"],
+                        "project_id": row["project_id"],
+                        "type": "event",
+                        "title": row["event_type"],
+                        "narrative": payload,
+                        "event_type": row["event_type"],
+                        "tool_name": row["tool_name"],
+                        "source_tool": row["source_tool"],
+                        "session_id": row["session_id"],
+                        "seq": row["seq"],
                     }
                 )
             return jsonify({"error": "invalid_prefix"}), 400

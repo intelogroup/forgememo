@@ -4,8 +4,8 @@
   "setup": {
     "description": "First-time setup — requires the user to complete interactive provider selection",
     "commands": [
-      "pip install forgemem",
-      "forgemem init"
+      "pip install forgememo",
+      "forgememo init"
     ],
     "note": "Do not try to bypass first-run setup. The user must run 'forgemem init' in a real terminal and choose a provider interactively. After setup, tell the user to restart Codex to activate the MCP connection."
   },

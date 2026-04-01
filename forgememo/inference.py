@@ -45,7 +45,7 @@ def _call_anthropic(prompt: str, max_tokens: int, model: str) -> str:
     if not api_key:
         print(
             "ERROR: No Anthropic API key found.\n"
-            "  Set it with: forgemem config provider anthropic --key sk-ant-...\n"
+            "  Set it with: forgememo config anthropic --key sk-ant-...\n"
             "  Or export ANTHROPIC_API_KEY=sk-ant-...",
             file=sys.stderr,
         )
@@ -71,7 +71,7 @@ def _call_openai(prompt: str, max_tokens: int, model: str) -> str:
     if not api_key:
         print(
             "ERROR: No OpenAI API key found.\n"
-            "  Set it with: forgemem config provider openai --key sk-...\n"
+            "  Set it with: forgememo config openai --key sk-...\n"
             "  Or export OPENAI_API_KEY=sk-...",
             file=sys.stderr,
         )
@@ -88,26 +88,27 @@ def _call_openai(prompt: str, max_tokens: int, model: str) -> str:
 
 def _call_gemini(prompt: str, max_tokens: int, model: str) -> str:
     try:
-        import google.generativeai as genai
+        import google.genai as genai
+        from google.genai import types as genai_types
     except ImportError:
-        print("ERROR: pip install google-generativeai", file=sys.stderr)
+        print("ERROR: pip install google-genai", file=sys.stderr)
         sys.exit(1)
 
     api_key = cfg.get_api_key("gemini")
     if not api_key:
         print(
             "ERROR: No Gemini API key found.\n"
-            "  Set it with: forgemem config provider gemini --key AIza...\n"
+            "  Set it with: forgememo config gemini --key AIza...\n"
             "  Or export GEMINI_API_KEY=AIza...",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    genai.configure(api_key=api_key)
-    gemini_model = genai.GenerativeModel(model)
-    response = gemini_model.generate_content(
-        prompt,
-        generation_config={"max_output_tokens": max_tokens},
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=genai_types.GenerateContentConfig(max_output_tokens=max_tokens),
     )
     return response.text.strip()
 
@@ -130,7 +131,7 @@ def _call_ollama(prompt: str, max_tokens: int, model: str) -> str:
         print(
             f"ERROR: Could not reach Ollama at {base_url}.\n"
             "  Make sure Ollama is running: ollama serve\n"
-            "  Or switch provider: forgemem config provider anthropic --key sk-ant-...",
+            "  Or switch provider: forgememo config anthropic --key sk-ant-...",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -139,7 +140,7 @@ def _call_ollama(prompt: str, max_tokens: int, model: str) -> str:
         print(
             f"ERROR: Model '{model}' not found in Ollama.\n"
             f"  Pull it with: ollama pull {model}\n"
-            "  Or set a different model: forgemem config model llama3.2",
+            "  Or set a different model: forgememo config --model llama3.2",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -191,7 +192,7 @@ def _call_forgemem_managed(prompt: str, max_tokens: int, model: str) -> str:
     if not token:
         print(
             "ERROR: Not authenticated with Forgememo.\n"
-            "  Run: forgemem auth login",
+            "  Run: forgememo auth login",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -208,14 +209,14 @@ def _call_forgemem_managed(prompt: str, max_tokens: int, model: str) -> str:
         sys.exit(1)
 
     if resp.status_code == 401:
-        print("ERROR: Session expired. Run: forgemem auth login", file=sys.stderr)
+        print("ERROR: Session expired. Run: forgememo auth login", file=sys.stderr)
         sys.exit(1)
     if resp.status_code == 402:
         balance = resp.json().get("balance_usd", "0.00")
         print(
             f"ERROR: Insufficient credits (balance: ${balance}).\n"
             "  Add credits: https://app.forgememo.com/billing\n"
-            "  Or switch to BYOK: forgemem config provider anthropic --key sk-ant-...",
+            "  Or switch to BYOK: forgememo config anthropic --key sk-ant-...",
             file=sys.stderr,
         )
         # Persist flag so `forgemem status` shows a warning until resolved.
