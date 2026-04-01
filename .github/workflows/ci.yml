@@ -23,7 +23,7 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pytest
       - name: Run tests
-        run: pytest -q || if [ $? -eq 5 ]; then echo "No tests collected — skipping"; else exit 1; fi
+        run: pytest -v --tb=short 2>&1 || if [ $? -eq 5 ]; then echo "No tests collected — skipping"; else exit 1; fi
         shell: bash
 
   tests-linux-container:
