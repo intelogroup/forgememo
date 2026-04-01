@@ -107,17 +107,49 @@ Sandboxes give you isolated, reproducible environments where you can run
 `claude -p`, `gemini -p`, and `codex exec` without worrying about agent
 side-effects leaking between tests.
 
-### 6. Other Options Evaluated
+### 6. Cirrus Runners - Strong Alternative for macOS
+
+**Verdict: Best option if macOS cost is your main pain point.**
+
+| Aspect | Details |
+|---|---|
+| **What it is** | Drop-in GitHub Actions runner replacement by Cirrus Labs (makers of Tart) |
+| **OS Support** | Linux (x64, arm64), macOS (M4 Pro -- fastest available), Windows |
+| **Pricing** | **$150/month per concurrent runner** (flat, unlimited minutes). Free for public repos. |
+| **macOS speed** | M4 Pro chips, 2-3x faster than GitHub-hosted runners. Powered by Tart (Apple Virtualization.framework) |
+| **Migration** | Single-line change: `runs-on: ghcr.io/cirruslabs/macos-sequoia-xcode:latest` |
+| **Adoption** | Bitcoin Core uses Cirrus for Linux CI. Ranked #1 for x64 CI performance in benchmarks. |
+
+**Why this matters for you**: GitHub charges 10x for macOS minutes. At $150/mo
+flat for unlimited macOS CI, Cirrus Runners eliminate the macOS cost problem
+entirely. If you're running 15+ macOS CI minutes per day, Cirrus pays for itself.
+
+### 7. Other Options Evaluated
 
 | Tool | Verdict | Why |
 |---|---|---|
-| **Cirrus CI** | Viable alternative | Native macOS (M1/M2), Linux, Windows, FreeBSD. Persistent workers. Lower adoption than GHA. |
 | **Buildkite** | Overkill | Self-hosted runners, great for large orgs. Too much infra overhead for your scale. |
-| **Earthly** | Complementary | Reproducible build definitions (like Dockerfile for CI). Good for complex build steps, but doesn't solve the runner problem. |
-| **Dagger** | Complementary | CI pipelines as code (Go/Python/TS). Interesting but adds abstraction layer. Doesn't provide runners. |
-| **Tart** | Niche | macOS-only VM tool for CI (by Cirrus Labs). Great if you need macOS VMs specifically. Pairs with Cirrus CI. |
-| **Firecracker** | Too low-level | MicroVM hypervisor (powers Lambda/Fargate). Would need significant wrapper tooling. Docker Sandboxes already use this concept. |
-| **Namespace.so** | Worth watching | Fast VMs for CI with GPU support. Good for AI workloads. Newer, less battle-tested. |
+| **Earthly** | Complementary | Reproducible build definitions (like Dockerfile for CI). Good for complex build steps, but doesn't solve the runner problem. Company pivoted to "Lunar" -- Earthfiles maintained but no longer primary focus. |
+| **Dagger** | Complementary | CI pipelines as code (Go/Python/TS). All steps run in OCI containers (Linux only). Cannot test native macOS/Windows. |
+| **Tart** | Niche | macOS VM tool by Cirrus Labs. Near-native speed via Apple Virtualization.framework. Great if you self-host on Apple Silicon hardware. Powers Cirrus Runners under the hood. |
+| **Firecracker** | Too low-level | MicroVM hypervisor (powers Lambda/Fargate). Linux guests only. Docker Sandboxes already use this concept. |
+| **Namespace.so** | Worth watching | Fast VMs for CI with GPU support. macOS M4 runners at $0.18-0.36/min. Good for AI workloads. |
+| **RunsOn** | Budget option | EUR 300/yr + AWS costs. Linux/Windows on AWS. No macOS (AWS 24hr Mac reservation makes it impractical). |
+
+### Runner Provider Comparison
+
+| Provider | Linux | macOS | Windows | Pricing Model |
+|---|---|---|---|---|
+| **GitHub Actions** | x64, arm64 | M1 (arm64) | x64 | Per-minute (macOS 10x) |
+| **Depot** | x64, arm64 | M2 (arm64) | x64 | Per-second, ~40-60% cheaper |
+| **Cirrus Runners** | x64, arm64 | M4 Pro (arm64) | x64 | $150/mo flat per runner |
+| **Namespace** | Yes | M4 | Yes | Per-minute |
+| **RunsOn** | x64, arm64 | No | Yes | EUR 300/yr + AWS |
+
+> **Note on macOS Intel**: GitHub is deprecating Intel macOS runners (macos-13
+> retiring Fall 2027). All macOS CI is moving to Apple Silicon. This doesn't
+> affect Forgememo since Python is architecture-agnostic, but be aware if you
+> add native extensions later.
 
 ---
 
