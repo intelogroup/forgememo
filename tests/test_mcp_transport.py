@@ -27,13 +27,24 @@ def test_daemon_get_uses_socket_when_available(monkeypatch):
             called["params"] = params
             return _Resp(payload={"ok": True})
 
+    def fake_http_get(url, params=None, timeout=5):
+        raise AssertionError(
+            "HTTP fallback should not be used when socket is available"
+        )
+
     monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
-    # HTTP_PORT now defaults to "5555" (HTTP-first) - don't override to None
+    # On Windows, socket is skipped and HTTP is used - mock both for cross-platform test
     monkeypatch.setattr(mcp_server, "_socket_session", lambda: _Session())
+    monkeypatch.setattr(mcp_server.requests, "get", fake_http_get)
 
     data = mcp_server._daemon_get("/health", params={"a": "b"})
     assert data["ok"] is True
-    assert called["url"].startswith("http+unix://")
+    # On Windows (sys.platform == "win32"), socket is skipped, so URL will be HTTP
+    # On POSIX, socket is used and URL will be http+unix://
+    if sys.platform == "win32":
+        assert called["url"].startswith("http://127.0.0.1:")
+    else:
+        assert called["url"].startswith("http+unix://")
 
 
 def test_daemon_get_falls_back_to_http(monkeypatch):
@@ -72,13 +83,24 @@ def test_daemon_post_uses_socket_when_available(monkeypatch):
             called["json"] = json
             return _Resp(payload={"ok": True})
 
+    def fake_http_post(url, json=None, timeout=5):
+        raise AssertionError(
+            "HTTP fallback should not be used when socket is available"
+        )
+
     monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
-    # HTTP_PORT now defaults to "5555" (HTTP-first) - don't override to None
+    # On Windows, socket is skipped and HTTP is used - mock both for cross-platform test
     monkeypatch.setattr(mcp_server, "_socket_session", lambda: _Session())
+    monkeypatch.setattr(mcp_server.requests, "post", fake_http_post)
 
     data = mcp_server._daemon_post("/events", payload={"a": 1})
     assert data["ok"] is True
-    assert called["url"].startswith("http+unix://")
+    # On Windows (sys.platform == "win32"), socket is skipped, so URL will be HTTP
+    # On POSIX, socket is used and URL will be http+unix://
+    if sys.platform == "win32":
+        assert called["url"].startswith("http://127.0.0.1:")
+    else:
+        assert called["url"].startswith("http+unix://")
 
 
 def test_daemon_post_falls_back_to_http(monkeypatch):
