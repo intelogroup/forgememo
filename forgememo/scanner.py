@@ -55,8 +55,12 @@ def log(msg: str):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{ts}] {msg}"
     print(line)
-    with open(LOG_FILE, "a") as f:
-        f.write(line + "\n")
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_FILE, "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
 
 
 def find_git_repos() -> list[Path]:

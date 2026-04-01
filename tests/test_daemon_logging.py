@@ -6,7 +6,8 @@ import tempfile
 
 
 def test_daemon_log_fallback_to_tmp(monkeypatch):
-    monkeypatch.setenv("FORGEMEMO_DAEMON_LOG", "/root/forgememo/forgememo_daemon.log")
+    # Use a path that will always fail makedirs (file as parent)
+    monkeypatch.setenv("FORGEMEMO_DAEMON_LOG", "/dev/null/impossible/forgememo_daemon.log")
     monkeypatch.setenv("FORGEMEMO_ALLOW_TMP_LOG", "1")
 
     import forgememo.daemon as daemon
