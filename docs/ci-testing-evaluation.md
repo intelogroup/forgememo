@@ -166,12 +166,17 @@ claude -p "run forgememo init --provider anthropic" --bare --output-format json
 --output-format json # Machine-readable output
 --dangerously-skip-permissions  # For isolated CI environments only
 --allowedTools "Bash,Read"      # Restrict tool access
+--append-system-prompt "..."    # Inject custom review/test instructions
+--session-id / --resume         # Multi-turn CI sessions
 ```
 
-- **Auth**: `ANTHROPIC_API_KEY` env var (no OAuth in CI)
-- **OS**: macOS 10.15+, Linux (Ubuntu 18.04+), Windows 10+ (Git for Windows or WSL)
-- **Resources**: 4 GB RAM min, 500 MB disk, network required
-- **CI maturity**: High. Official GitHub Actions integration. 60%+ enterprise adoption in CI.
+- **Install**: `curl -fsSL https://claude.ai/install.sh | bash` (native, no Node.js) or `npm i -g @anthropic-ai/claude-code` (Node.js 18+)
+- **Auth**: `ANTHROPIC_API_KEY` env var (or Bedrock/Vertex/Foundry credentials)
+- **OS**: macOS 13+, Linux 64-bit (Ubuntu/Debian/Fedora; Alpine needs libgcc, libstdc++, ripgrep), Windows 11 (WSL 1/2 or native PowerShell preview)
+- **Resources**: 4 GB RAM min, 500 MB disk, network required. All inference is server-side.
+- **CI maturity**: High. Official GitHub Actions + GitLab CI integrations. Agent SDK in Python + TypeScript. 60%+ enterprise CI adoption.
+- **Sandbox**: Native OS-level filesystem + network isolation. Docker Sandboxes (Desktop 4.60+) for microVM isolation.
+- **Caveats**: Interactive skills (`/commit`, `/review`) unavailable in `-p` mode. Requires Pro/Max/Teams/Enterprise/Console account.
 
 ### Gemini CLI in CI
 
@@ -180,11 +185,14 @@ claude -p "run forgememo init --provider anthropic" --bare --output-format json
 gemini -p "run forgememo init --provider gemini" --output-format json
 ```
 
-- **Auth**: `GEMINI_API_KEY` env var (simplest for CI; OAuth requires browser)
-- **OS**: macOS 15+, Windows 11, Ubuntu 20.04+, any OS with Node.js 20+
-- **Resources**: Node.js 20+ required, 4 GB RAM, ~150 MB disk
-- **CI maturity**: Medium. GitHub Action available but CI story less mature than Claude Code.
-- **Free tier**: 60 req/min, 1,000 req/day
+- **Install**: `npm i -g @google/gemini-cli` (Node.js 20+ required). Also via Homebrew, MacPorts, Anaconda.
+- **Auth**: `GEMINI_API_KEY` env var (simplest for CI; OAuth requires browser). Vertex AI via `GOOGLE_API_KEY` + `GOOGLE_GENAI_USE_VERTEXAI=true`.
+- **OS**: macOS 15+, Ubuntu 20.04+, Windows 11 24H2+, any OS with Node.js 20+
+- **Resources**: 4 GB RAM (16 GB recommended for large codebases), ~150 MB disk
+- **CI maturity**: Medium. Official GitHub Action available. CI story still maturing vs Claude Code.
+- **Free tier**: 60 req/min, 1,000 req/day. 1M token context window (Gemini 2.5 Pro).
+- **Sandbox**: Trusted Folders system. Docker Sandboxes support. Dockerfile in official repo.
+- **Caveats**: May need human guidance at key decision points (less autonomous in benchmarks). API key auth required for CI (OAuth is interactive).
 
 ### Codex CLI in CI
 
@@ -192,14 +200,43 @@ gemini -p "run forgememo init --provider gemini" --output-format json
 # Non-interactive mode
 codex exec "run forgememo init --provider openai" --json --full-auto
 # Or for fully isolated runners:
-codex exec "..." --yolo  # Bypasses all sandboxing
+codex exec "..." --yolo  # Bypasses all sandboxing and approval
 ```
 
-- **Auth**: OpenAI API key or ChatGPT Plus/Pro subscription
-- **OS**: macOS (full), Linux (full, Landlock kernel 5.13+), Windows (experimental)
-- **Resources**: npm install, Rust binary, minimal local overhead
-- **CI maturity**: Medium. GitHub Action available. `--yolo` mode designed for CI.
-- **Sandbox modes**: `workspace-write` (default), `danger-full-access`
+- **Install**: `npm i -g @openai/codex` (Node.js 22+ LTS, built in Rust). Git 2.23+ recommended.
+- **Auth**: OpenAI API key or ChatGPT Plus/Pro/Business/Edu/Enterprise subscription
+- **OS**: macOS 12+, Ubuntu 20.04+/Debian 10+, Windows 11 via WSL 2 (experimental native Windows with elevated/unelevated sandbox modes)
+- **Resources**: 4 GB RAM min (8 GB recommended), minimal local overhead. Known issue: heavy concurrent sessions can cause memory pressure.
+- **CI maturity**: Medium. Official GitHub Action. `--yolo` mode designed for isolated CI.
+- **Sandbox modes**: `workspace-write` (default, no network), `danger-full-access`. Linux uses `bubblewrap`. Enterprise: `requirements.toml` enforces policies org-wide.
+- **Caveats**: Windows support experimental. AppArmor distros may need `kernel.apparmor_restrict_unprivileged_userns=0`. Memory pressure under concurrent usage.
+
+### Agent Comparison Matrix
+
+| Feature | Claude Code | Gemini CLI | Codex CLI |
+|---|---|---|---|
+| **Non-interactive flag** | `-p` / `--print` | `-p` / `--prompt` | `codex exec` / `codex e` |
+| **Bare/fast CI mode** | `--bare` | N/A | N/A |
+| **Output formats** | text, json, stream-json | json, stream-json | json (`--json`) |
+| **Skip permissions** | `--dangerously-skip-permissions` | N/A | `--yolo` |
+| **Node.js requirement** | None (native) or 18+ (npm) | 20+ | 22+ |
+| **Min RAM** | 4 GB | 4 GB (16 GB rec.) | 4 GB (8 GB rec.) |
+| **Docker Sandboxes** | Yes (microVM) | Yes (microVM) | Yes (microVM) |
+| **Official GitHub Action** | Yes | Yes | Yes |
+| **Agent SDK** | Python + TypeScript | Developing | TypeScript |
+| **License/Cost** | Pro/Max/Teams/Enterprise | Apache 2.0 (free: 1K req/day) | Plus/Pro/Business/Enterprise |
+| **Context window** | 200K tokens | 1M tokens | Model-dependent |
+
+### Practical CI Recommendations
+
+1. **Use `--bare` (Claude) or equivalent minimal flags** for reproducibility
+2. **Store API keys as CI secrets** -- never hardcode
+3. **Run inside Docker Sandboxes or microVMs** when using `--dangerously-skip-permissions` / `--yolo`
+4. **Limit tool access** with `--allowedTools` (Claude) to reduce blast radius
+5. **Use JSON output** for machine-parseable results in pipeline steps
+6. **Set timeouts**: agents can loop -- wrap calls with CI-level timeouts
+7. **Pin CLI versions** in CI to avoid breaking changes
+8. **Alpine Linux**: install libgcc, libstdc++, ripgrep for Claude Code; ensure Node.js 20+ for Gemini; 22+ for Codex
 
 ---
 
