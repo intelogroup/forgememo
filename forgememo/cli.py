@@ -386,11 +386,11 @@ def _configure_provider_noninteractive(provider: str) -> None:
         )
 
 
-def _prompt_provider_setup(yes: bool) -> None:
-    """If no provider is configured, require interactive provider selection."""
+def _prompt_provider_setup(yes: bool, force: bool = False) -> None:
+    """Interactive provider selection. Skips if already configured unless force=True."""
     from forgememo import config as fm_cfg
 
-    if fm_cfg.load().get("provider") is not None:
+    if fm_cfg.load().get("provider") is not None and not force:
         return  # already configured (e.g. Ollama was just set above)
 
     # Non-interactive mode: warn visibly and skip
@@ -1443,6 +1443,12 @@ def config(
         if active == "ollama":
             tbl.add_row("Ollama URL", fm_cfg.get_ollama_url())
         console.print(Panel(tbl, title="Forgememo Config", expand=False))
+
+        # Offer interactive provider switch if running in a TTY
+        if sys.stdin.isatty() and not show:
+            switch = typer.confirm("\nSwitch provider?", default=False)
+            if switch:
+                _prompt_provider_setup(yes=False, force=True)
         return
 
     if provider not in fm_cfg.SUPPORTED_PROVIDERS:
