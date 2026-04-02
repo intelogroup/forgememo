@@ -59,7 +59,7 @@ jobs:
         run: |
           test -f ~/.claude/skills/forgememo.md || (echo "FAIL: claude skill missing" && exit 1)
           test -f ~/.gemini/forgememo-skill.md || (echo "FAIL: gemini skill missing" && exit 1)
-          test -f ~/.codex/forgememo-skill.json || (echo "FAIL: codex skill missing" && exit 1)
+          test -f ~/.codex/skills/forgememo-skill.json || (echo "FAIL: codex skill missing" && exit 1)
           echo "All skill files present"
 
       # ── Verify MCP registration ─────────────────────────────
@@ -338,7 +338,7 @@ jobs:
         run: |
           test -f ~/.claude/skills/forgememo.md && echo "claude skill OK" || echo "claude skill missing (OK if ~/.claude didn't exist)"
           test -f ~/.gemini/forgememo-skill.md && echo "gemini skill OK" || echo "gemini skill missing"
-          test -f ~/.codex/forgememo-skill.json && echo "codex skill OK" || echo "codex skill missing"
+          test -f ~/.codex/skills/forgememo-skill.json && echo "codex skill OK" || echo "codex skill missing"
 
   # ═══════════════════════════════════════════════════════════════════
   # Job 3: Skill content validation — verify generated skills are valid
@@ -401,7 +401,7 @@ jobs:
         run: |
           python -c "
           import json, pathlib
-          skill = pathlib.Path.home() / '.codex/forgememo-skill.json'
+          skill = pathlib.Path.home() / '.codex/skills/forgememo-skill.json'
           data = json.loads(skill.read_text())
           assert isinstance(data, dict), f'Expected dict, got {type(data)}'
           # Codex skills should be valid JSON with meaningful content

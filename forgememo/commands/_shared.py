@@ -50,19 +50,42 @@ CROSS = "\u2717" if _UNICODE_OK else "x"
 
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / "com.forgememo.daemon.plist"
 PLIST_LABEL = "com.forgememo.daemon"
-WORKER_PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / "com.forgememo.worker.plist"
+WORKER_PLIST_PATH = (
+    Path.home() / "Library" / "LaunchAgents" / "com.forgememo.worker.plist"
+)
 WORKER_PLIST_LABEL = "com.forgememo.worker"
-MINER_PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / "com.forgememo.miner.plist"
+MINER_PLIST_PATH = (
+    Path.home() / "Library" / "LaunchAgents" / "com.forgememo.miner.plist"
+)
 MINER_PLIST_LABEL = "com.forgememo.miner"
 LOG_PATH = Path.home() / "Library" / "Logs" / "forgememo.log"
+
+SKILL_TEMPLATES_DIR = Path(__file__).parent.parent / "skills"
+
+
+def get_codex_skill_path() -> Path:
+    """Resolve Codex skill path with 2026 convention: $CODEX_HOME/skills -> ~/.codex/skills."""
+    import os
+
+    base_dir = os.environ.get("CODEX_HOME")
+    if base_dir:
+        skills_dir = Path(base_dir) / "skills"
+    else:
+        skills_dir = Path.home() / ".codex" / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    return skills_dir / "forgememo-skill.json"
+
+
+def get_legacy_codex_skill_path() -> Path:
+    """Return the old deprecated path for migration/cleanup."""
+    return Path.home() / ".codex" / "forgememo-skill.json"
+
 
 SKILL_PATHS: dict[str, Path] = {
     "claude": Path.home() / ".claude" / "skills" / "forgememo.md",
     "gemini": Path.home() / ".gemini" / "forgememo-skill.md",
-    "codex": Path.home() / ".codex" / "forgememo-skill.json",
+    "codex": get_codex_skill_path(),
 }
-
-SKILL_TEMPLATES_DIR = Path(__file__).parent.parent / "skills"
 
 _CONTEXT_FILES = [
     "CLAUDE.md",
@@ -106,7 +129,7 @@ def _format_context_markdown(
             narrative = p.get("narrative") or ""
             tail = f" \u2014 {narrative}" if narrative else ""
             lines.append(
-                f"- [{p.get('type','')}] {p.get('title','')} ({score_str}, {date}){tail}"
+                f"- [{p.get('type', '')}] {p.get('title', '')} ({score_str}, {date}){tail}"
             )
 
     lines.append("")
@@ -114,7 +137,7 @@ def _format_context_markdown(
     if not last_session:
         lines.append("_No session summary found._")
     else:
-        lines.append(f"Request: {last_session.get('request','')}")
+        lines.append(f"Request: {last_session.get('request', '')}")
         if last_session.get("investigation"):
             lines.append(f"Investigation: {last_session.get('investigation')}")
         if last_session.get("learnings"):
@@ -127,6 +150,7 @@ def _format_context_markdown(
 def _forgememo_bin() -> str:
     """Return the absolute path to the forgememo binary, or bare name as fallback."""
     import shutil
+
     return shutil.which("forgememo") or "forgememo"
 
 
@@ -136,7 +160,9 @@ def _register_mcp(settings_path: Path) -> bool:
     data = json.loads(settings_path.read_text()) if settings_path.exists() else {}
     servers = data.setdefault("mcpServers", {})
     existing_cmd = servers.get("forgememo", {}).get("command", "")
-    if "forgememo" not in servers or (existing_cmd == "forgememo" and bin_path != "forgememo"):
+    if "forgememo" not in servers or (
+        existing_cmd == "forgememo" and bin_path != "forgememo"
+    ):
         servers["forgememo"] = {"command": bin_path, "args": ["mcp"]}
         try:
             settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -168,7 +194,8 @@ def _register_hooks(settings_path: Path) -> bool:
         if old_event in hooks:
             old_entries = hooks[old_event]
             kept = [
-                h for h in old_entries
+                h
+                for h in old_entries
                 if "forgememo hook" not in h.get("hooks", [{}])[0].get("command", "")
             ]
             if len(kept) != len(old_entries):
@@ -183,8 +210,11 @@ def _register_hooks(settings_path: Path) -> bool:
         existing = hooks.get(event, [])
         # Find existing entry (bare or absolute path)
         match_idx = next(
-            (i for i, h in enumerate(existing)
-             if "forgememo hook" in h.get("hooks", [{}])[0].get("command", "")),
+            (
+                i
+                for i, h in enumerate(existing)
+                if "forgememo hook" in h.get("hooks", [{}])[0].get("command", "")
+            ),
             None,
         )
         if match_idx is None:
@@ -249,19 +279,28 @@ def _generate_skill(agent: str, dry_run: bool = False) -> None:
 
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        # Probe writeability before the real write — gives a cleaner error
-        # message and avoids partial writes on permission-denied paths (common
-        # on Windows where Codex may own ~/.codex with restricted ACLs).
-        probe = dest.with_suffix(".tmp")
-        probe.write_text("")
-        probe.unlink()
         dest.write_text(template.read_text())
         console.print(f"  [green]wrote[/] {dest}")
-    except PermissionError:
-        console.print(
-            f"  [yellow]skipped:[/] {dest} "
-            "(permission denied — run as admin or grant write access to that directory)"
-        )
+
+        if agent == "codex":
+            legacy_path = get_legacy_codex_skill_path()
+            if legacy_path.exists():
+                legacy_path.unlink()
+                console.print(
+                    "  [dim]Deprecated Codex skill at root removed; migrated to /skills/[/]"
+                )
+    except OSError as e:
+        console.print(f"  [yellow]skipped:[/] {dest}")
+        console.print(f"  [red]Failed to write skill:[/] {e}")
+        if agent == "codex":
+            console.print("\n  [bold]Manual install:[/]")
+            console.print("  1. Create directory: mkdir -p ~/.codex/skills")
+            console.print(
+                "  2. Copy skill file to: ~/.codex/skills/forgememo-skill.json"
+            )
+            console.print(
+                "  Or set CODEX_HOME environment variable to customize the path."
+            )
 
 
 def _auto_detect_and_generate_skills(yes: bool) -> None:
