@@ -78,7 +78,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          # Kill any process on port 5555 first
+          Get-NetTCPConnection -LocalPort 5555 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
           Start-Sleep -Seconds 2
           $env:FORGEMEMO_HTTP_PORT = "5555"
           # Start daemon as background job
@@ -130,7 +131,8 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          # Kill any existing daemon processes
+          # Kill any process on port 5555 first (including from init's LaunchAgent)
+          fuser -k 5555/tcp 2>/dev/null || true
           pkill -f "forgememo.daemon" 2>/dev/null || true
           pkill -f "forgememo daemon" 2>/dev/null || true
           sleep 2
