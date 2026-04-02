@@ -217,8 +217,10 @@ def _do_start(
     if sys.platform == "win32":
         forgememo_bin = shutil.which("forgememo") or "forgememo"
         http_port = str(read_port())
-        task_cmd = f'cmd /c "set FORGEMEMO_HTTP_PORT={http_port} && \\"{forgememo_bin}\\" daemon"'
-        worker_cmd = f'cmd /c "set FORGEMEMO_HTTP_PORT={http_port} && \\"{forgememo_bin}\\" worker"'
+        # Use direct exe invocation — no cmd /c wrapper avoids cmd.exe quoting
+        # hell. Port is discovered via lockfile so no env var needed in the task.
+        task_cmd = f'"{forgememo_bin}" daemon'
+        worker_cmd = f'"{forgememo_bin}" worker'
         for tn, tr in [("Forgememo Daemon", task_cmd), ("Forgememo Worker", worker_cmd)]:
             r = subprocess.run(
                 ["schtasks", "/create", "/tn", tn, "/tr", tr, "/sc", "ONLOGON", "/f"],
@@ -230,10 +232,15 @@ def _do_start(
                 console.print(f"[yellow]schtasks failed for '{tn}':[/] {r.stderr.strip()}")
         env = os.environ.copy()
         env["FORGEMEMO_HTTP_PORT"] = http_port
+        # DEVNULL for all std streams — daemon must not inherit the parent's
+        # console handles. When init exits those handles close, crashing Flask.
         subprocess.Popen(
             [forgememo_bin, "daemon"],
             env=env,
             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         import time as _time
         import urllib.request as _urllib
