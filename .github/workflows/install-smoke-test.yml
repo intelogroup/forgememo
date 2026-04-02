@@ -67,11 +67,11 @@ jobs:
         run: |
           python -c "
           import json
-           from pathlib import Path
-           data = json.load(open(Path.home() / '.claude' / 'settings.json'))
-           assert 'forgememo' in data.get('mcpServers', {}), 'MCP not registered'
-           print('MCP registered OK')
-           "
+          from pathlib import Path
+          data = json.load(open(Path.home() / '.claude' / 'settings.json'))
+          assert 'forgememo' in data.get('mcpServers', {}), 'MCP not registered'
+          print('MCP registered OK')
+          "
 
       # ── Start daemon directly (bypass launchctl for CI determinism) ─
       - name: Start daemon and verify (POSIX)
