@@ -81,11 +81,23 @@ jobs:
           # Kill any existing daemon processes to avoid port conflicts
           pkill -f "forgememo.daemon" 2>/dev/null || true
           pkill -f "python.*forgememo" 2>/dev/null || true
+          pkill -f "forgememo daemon" 2>/dev/null || true
+          # Kill any process on default port 5555 (from init)
+          fuser -k 5555/tcp 2>/dev/null || true
           sleep 2
           # Use a fresh port to avoid conflicts with any lingering processes
           export FORGEMEMO_HTTP_PORT=5556
-          python -m forgememo.daemon &
-          sleep 3
+          nohup python -m forgememo.daemon > /tmp/daemon.log 2>&1 &
+          DAEMON_PID=$!
+          echo "Started daemon with PID $DAEMON_PID"
+          sleep 5
+          # Check if daemon is still running
+          if ! kill -0 $DAEMON_PID 2>/dev/null; then
+            echo "Daemon exited! Log:"
+            cat /tmp/daemon.log
+            exit 1
+          fi
+          # Now wait for port
           python -c "
           from forgememo.daemon import wait_for_port
           assert wait_for_port('127.0.0.1', 5556, timeout=30), 'Daemon failed to start'
@@ -104,7 +116,7 @@ jobs:
           # Use a fresh port to avoid conflicts
           $env:FORGEMEMO_HTTP_PORT = "5556"
           Start-Process -NoNewWindow python -ArgumentList "-m","forgememo.daemon"
-          Start-Sleep -Seconds 3
+          Start-Sleep -Seconds 5
           python -c "
           from forgememo.daemon import wait_for_port
           assert wait_for_port('127.0.0.1', 5556, timeout=30), 'Daemon failed to start'
