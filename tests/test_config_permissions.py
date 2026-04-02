@@ -85,7 +85,7 @@ class TestConfigDirCreation:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions only")
-@pytest.mark.skipif(os.getuid() == 0, reason="Root bypasses permission checks")
+@pytest.mark.skipif(getattr(os, "getuid", lambda: -1)() == 0, reason="Root bypasses permission checks")
 class TestReadOnlyParent:
     def test_save_fails_gracefully_on_readonly_parent(self, tmp_path, monkeypatch):
         """If parent of config dir is read-only, save() should raise, not corrupt."""
@@ -127,7 +127,7 @@ class TestDBDirCreation:
 
 class TestDaemonLogFallback:
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions only")
-    @pytest.mark.skipif(os.getuid() == 0, reason="Root bypasses permission checks")
+    @pytest.mark.skipif(getattr(os, "getuid", lambda: -1)() == 0, reason="Root bypasses permission checks")
     def test_log_fallback_to_tmp(self, tmp_path, monkeypatch):
         """When primary log dir is unwritable, fallback to /tmp."""
         import forgememo.daemon as daemon_module

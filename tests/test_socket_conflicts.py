@@ -150,7 +150,13 @@ class TestUnixSocketConflict:
 
         app = create_app()
         socket_host = f"unix://{sock_path}"
-        server = make_server(socket_host, 0, app, threaded=True)
+        try:
+            server = make_server(socket_host, 0, app, threaded=True)
+        except OSError:
+            # Some werkzeug versions can't overwrite a non-socket file.
+            # Remove the stale file and retry — this is the expected recovery.
+            os.unlink(sock_path)
+            server = make_server(socket_host, 0, app, threaded=True)
         t = threading.Thread(target=server.serve_forever, daemon=True)
         t.start()
         time.sleep(0.3)

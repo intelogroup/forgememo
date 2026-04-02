@@ -151,17 +151,30 @@ class TestEnsureDaemonResilience:
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals only")
 class TestGracefulShutdown:
     def test_signal_handler_sets_shutdown_flag(self):
-        gs = GracefulShutdown()
-        assert gs.shutdown is False
-        # Simulate SIGTERM
-        gs._signal_handler(signal.SIGTERM, None)
-        assert gs.shutdown is True
+        # Save original handlers so we can restore them (pytest registers its own)
+        orig_term = signal.getsignal(signal.SIGTERM)
+        orig_int = signal.getsignal(signal.SIGINT)
+        try:
+            gs = GracefulShutdown()
+            assert gs.shutdown is False
+            # Simulate SIGTERM via the handler method (don't actually send signal)
+            gs._signal_handler(signal.SIGTERM, None)
+            assert gs.shutdown is True
+        finally:
+            signal.signal(signal.SIGTERM, orig_term)
+            signal.signal(signal.SIGINT, orig_int)
 
     def test_signal_handler_idempotent(self):
-        gs = GracefulShutdown()
-        gs._signal_handler(signal.SIGINT, None)
-        gs._signal_handler(signal.SIGINT, None)
-        assert gs.shutdown is True
+        orig_term = signal.getsignal(signal.SIGTERM)
+        orig_int = signal.getsignal(signal.SIGINT)
+        try:
+            gs = GracefulShutdown()
+            gs._signal_handler(signal.SIGINT, None)
+            gs._signal_handler(signal.SIGINT, None)
+            assert gs.shutdown is True
+        finally:
+            signal.signal(signal.SIGTERM, orig_term)
+            signal.signal(signal.SIGINT, orig_int)
 
 
 # ─── Session-end subprocess spawn ────────────────────────────────────────────

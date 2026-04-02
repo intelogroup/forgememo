@@ -354,21 +354,14 @@ jobs:
       - name: Run resilience test suite
         shell: bash
         run: |
+          python -m pip install pytest
           python -m pytest \
             tests/test_socket_conflicts.py \
             tests/test_db_corruption.py \
             tests/test_config_permissions.py \
             tests/test_case_sensitivity.py \
             tests/test_interrupt_threading.py \
-            -v --tb=short 2>&1 | tail -80
-          # Re-run with exit code check (previous was for display)
-          python -m pytest \
-            tests/test_socket_conflicts.py \
-            tests/test_db_corruption.py \
-            tests/test_config_permissions.py \
-            tests/test_case_sensitivity.py \
-            tests/test_interrupt_threading.py \
-            -q
+            -v --tb=short -q
 
       # ── Module import test ───────────────────────────────────
       - name: Verify all module imports
