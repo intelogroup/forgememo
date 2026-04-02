@@ -6,13 +6,17 @@ compatibility views for legacy traces/principles data.
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 DB_PATH = Path(
     os.environ.get("FORGEMEM_DB", Path.home() / ".forgememo" / "forgememo_memory.db")
 )
+
+MIGRATION_LOG = logging.getLogger("forgememo.migration")
 
 
 SCHEMA_SQL = """
@@ -117,6 +121,20 @@ CREATE INDEX IF NOT EXISTS idx_ss_session ON session_summaries(session_id);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS session_summaries_fts
   USING fts5(request, learnings, next_steps, concepts, project_id);
+
+-- Error tracking for mid-session recall
+CREATE TABLE IF NOT EXISTS error_events (
+  id              INTEGER PRIMARY KEY,
+  ts              DATETIME DEFAULT CURRENT_TIMESTAMP,
+  session_id      TEXT NOT NULL,
+  project_id      TEXT,
+  fingerprint     TEXT NOT NULL,
+  error_keywords  TEXT,
+  error_text      TEXT,
+  recalled_at     DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_error_session_fp ON error_events(session_id, fingerprint);
+CREATE INDEX IF NOT EXISTS idx_error_project ON error_events(project_id);
 """
 
 
@@ -142,6 +160,98 @@ CREATE VIEW IF NOT EXISTS distilled_summaries_compat AS
 """
 
 
+MIGRATIONS = {}
+
+
+def register_migration(version: int):
+    """Decorator to register a migration function for a specific schema version."""
+
+    def decorator(func):
+        MIGRATIONS[version] = func
+        return func
+
+    return decorator
+
+
+@register_migration(2)
+def migrate_to_v2(conn: sqlite3.Connection) -> int:
+    """Normalize project_id paths on case-insensitive filesystems (macOS/Windows).
+
+    On case-insensitive filesystems, ProjectA and projecta resolve to the same
+    canonical form. This migration ensures all project_ids are stored in lowercase
+    form on darwin/win32 platforms.
+    """
+    import sys
+
+    affected = 0
+    if sys.platform not in ("darwin", "win32"):
+        MIGRATION_LOG.info(
+            "Case-normalization skipped: filesystem is case-sensitive (Linux)"
+        )
+        return 0
+
+    tables_with_project_id = [
+        "events",
+        "distilled_summaries",
+        "session_summaries",
+        "error_events",
+        "traces",
+        "principles",
+    ]
+    project_column_map = {
+        "events": "project_id",
+        "distilled_summaries": "project_id",
+        "session_summaries": "project_id",
+        "error_events": "project_id",
+        "traces": "project_tag",
+        "principles": "project_tag",
+    }
+
+    for table in tables_with_project_id:
+        col = project_column_map.get(table)
+        if not col:
+            continue
+        try:
+            result = conn.execute(
+                f"SELECT id, {col} FROM {table} WHERE {col} IS NOT NULL AND {col} != lower({col})"
+            ).fetchall()
+            if result:
+                MIGRATION_LOG.info(
+                    "  Normalizing %d rows in %s.%s", len(result), table, col
+                )
+                for row in result:
+                    normalized = os.path.abspath(row[col]).lower()
+                    conn.execute(
+                        f"UPDATE {table} SET {col}=? WHERE id=?",
+                        (normalized, row["id"]),
+                    )
+                    affected += 1
+        except sqlite3.OperationalError as e:
+            MIGRATION_LOG.warning("  Skipping %s.%s: %s", table, col, e)
+            continue
+
+    return affected
+
+
+def run_migrations(conn: sqlite3.Connection) -> None:
+    """Run all pending migrations up to the current schema version."""
+    current_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    MIGRATION_LOG.info("Database schema version: %d (current: 2)", current_version)
+
+    for version in sorted(MIGRATIONS.keys()):
+        if version <= current_version:
+            continue
+
+        MIGRATION_LOG.info("Applying migration v%d...", version)
+        migration_func = MIGRATIONS[version]
+        affected = migration_func(conn)
+        conn.execute(f"PRAGMA user_version = {version}")
+        conn.commit()
+        MIGRATION_LOG.info(
+            "Migration v%d complete: %d rows normalized", version, affected
+        )
+
+
 def get_conn() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH), timeout=30, check_same_thread=False)
@@ -158,5 +268,5 @@ def init_db() -> None:
     conn.executescript(SCHEMA_SQL)
     conn.executescript(COMPAT_VIEW_SQL)
     conn.commit()
+    run_migrations(conn)
     conn.close()
-

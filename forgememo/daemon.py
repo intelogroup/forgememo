@@ -49,6 +49,21 @@ SOCKET_PATH = os.environ.get(
 )
 HTTP_PORT = os.environ.get("FORGEMEMO_HTTP_PORT", "5555")
 
+
+def _canonicalize_project_id(path: str) -> str:
+    """Normalize path for consistent project identification across OSes.
+
+    On case-insensitive filesystems (macOS/Windows), ProjectA and projecta
+    resolve to the same canonical form. On case-sensitive (Linux), they remain distinct.
+    """
+    if not path:
+        return path
+    abs_path = os.path.abspath(os.path.expanduser(path))
+    if sys.platform == "darwin" or sys.platform == "win32":
+        return abs_path.lower()
+    return abs_path
+
+
 try:
     os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 except OSError:
@@ -64,6 +79,16 @@ logging.basicConfig(
     handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
+
+_migration_handler = logging.StreamHandler(sys.stderr)
+_migration_handler.setLevel(logging.INFO)
+_migration_handler.setFormatter(
+    logging.Formatter("[%(asctime)s] MIGRATION: %(message)s")
+)
+migration_logger = logging.getLogger("forgememo.migration")
+migration_logger.addHandler(_migration_handler)
+migration_logger.setLevel(logging.INFO)
+migration_logger.propagate = False
 
 _write_lock = threading.Lock()
 
@@ -261,6 +286,8 @@ def create_app() -> Flask:
         k = int(request.args.get("k") or 10)
         k = max(1, min(k, 50))
         project_id = request.args.get("project_id")
+        if project_id:
+            project_id = _canonicalize_project_id(project_id)
         type_filter = request.args.get("type")
         concepts_raw = request.args.get("concepts")
         concepts = (
@@ -436,6 +463,98 @@ def create_app() -> Flask:
                 results = filtered
 
             return jsonify({"results": results})
+        finally:
+            conn.close()
+
+    @app.route("/recent")
+    def recent():
+        """Return the most recent memories by timestamp with inline excerpts."""
+        k = min(int(request.args.get("k") or 5), 20)
+        project_id = request.args.get("project_id")
+        proj_clause = "AND project_id = ?" if project_id else ""
+        proj_params = [project_id] if project_id else []
+
+        conn = get_conn()
+        try:
+            results = []
+
+            # Distilled summaries (highest signal)
+            rows = conn.execute(
+                f"SELECT id, ts, type, title, narrative, impact_score, project_id "
+                f"FROM distilled_summaries WHERE 1=1 {proj_clause} "
+                f"ORDER BY ts DESC LIMIT ?",
+                proj_params + [k],
+            ).fetchall()
+            for r in rows:
+                results.append(
+                    {
+                        "id": f"d:{r['id']}",
+                        "ts": r["ts"],
+                        "type": r["type"],
+                        "title": r["title"],
+                        "narrative": (r["narrative"] or "")[:200],
+                        "impact_score": r["impact_score"],
+                        "project_id": r["project_id"],
+                    }
+                )
+
+            # Recent scanner_learning events (have content field in payload)
+            if len(results) < k:
+                rows = conn.execute(
+                    f"SELECT id, ts, project_id, event_type, tool_name, payload "
+                    f"FROM events WHERE event_type='scanner_learning' {proj_clause} "
+                    f"ORDER BY ts DESC LIMIT ?",
+                    proj_params + [k - len(results)],
+                ).fetchall()
+                for r in rows:
+                    try:
+                        p = json.loads(r["payload"]) if r["payload"] else {}
+                    except Exception:
+                        p = {}
+                    excerpt = (p.get("content") or "")[:200]
+                    results.append(
+                        {
+                            "id": f"e:{r['id']}",
+                            "ts": r["ts"],
+                            "type": "event",
+                            "title": r["event_type"],
+                            "excerpt": excerpt,
+                            "impact_score": None,
+                            "project_id": r["project_id"],
+                        }
+                    )
+
+            # Recent PostToolUse events as fallback
+            if len(results) < k:
+                rows = conn.execute(
+                    f"SELECT id, ts, project_id, event_type, tool_name, payload "
+                    f"FROM events WHERE event_type != 'scanner_learning' {proj_clause} "
+                    f"ORDER BY ts DESC LIMIT ?",
+                    proj_params + [k - len(results)],
+                ).fetchall()
+                for r in rows:
+                    try:
+                        p = json.loads(r["payload"]) if r["payload"] else {}
+                    except Exception:
+                        p = {}
+                    excerpt = (p.get("content") or "")[:200]
+                    title = r["event_type"]
+                    if r["tool_name"]:
+                        title = f"{title} ({r['tool_name']})"
+                    results.append(
+                        {
+                            "id": f"e:{r['id']}",
+                            "ts": r["ts"],
+                            "type": "event",
+                            "title": title,
+                            "excerpt": excerpt,
+                            "impact_score": None,
+                            "project_id": r["project_id"],
+                        }
+                    )
+
+            results.sort(key=lambda x: x["ts"] or "", reverse=True)
+            return jsonify({"results": results[:k]})
         finally:
             conn.close()
 
@@ -678,6 +797,147 @@ def create_app() -> Flask:
         finally:
             conn.close()
 
+    @app.route("/error_events", methods=["POST"])
+    def post_error_event():
+        data = request.get_json(silent=True) or {}
+        session_id = data.get("session_id")
+        fingerprint = data.get("fingerprint")
+        if not session_id or not fingerprint:
+            return jsonify({"error": "session_id and fingerprint required"}), 400
+
+        error_text = strip_private(data.get("error_text") or "")
+        project_id = data.get("project_id")
+        if project_id:
+            project_id = _canonicalize_project_id(project_id)
+
+        with _write_lock:
+            conn = get_conn()
+            try:
+                conn.execute(
+                    "INSERT INTO error_events (session_id, project_id, fingerprint, error_keywords, error_text) "
+                    "VALUES (?,?,?,?,?)",
+                    (
+                        session_id,
+                        project_id,
+                        fingerprint,
+                        data.get("error_keywords"),
+                        error_text[:1000] if error_text else None,
+                    ),
+                )
+                conn.commit()
+            except sqlite3.OperationalError as e:
+                msg = str(e).lower()
+                if "no such table" not in msg:
+                    logger.warning("error_events INSERT failed: %s", e)
+                    conn.close()
+                    return jsonify({"error": "db_error", "message": str(e)}), 503
+                try:
+                    conn.executescript(
+                        "CREATE TABLE IF NOT EXISTS error_events ("
+                        "  id INTEGER PRIMARY KEY,"
+                        "  ts DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                        "  session_id TEXT NOT NULL,"
+                        "  project_id TEXT,"
+                        "  fingerprint TEXT NOT NULL,"
+                        "  error_keywords TEXT,"
+                        "  error_text TEXT,"
+                        "  recalled_at DATETIME"
+                        ");"
+                        "CREATE INDEX IF NOT EXISTS idx_error_session_fp ON error_events(session_id, fingerprint);"
+                        "CREATE INDEX IF NOT EXISTS idx_error_project ON error_events(project_id);"
+                    )
+                    conn.execute(
+                        "INSERT INTO error_events (session_id, project_id, fingerprint, error_keywords, error_text) "
+                        "VALUES (?,?,?,?,?)",
+                        (
+                            session_id,
+                            project_id,
+                            fingerprint,
+                            data.get("error_keywords"),
+                            error_text[:1000] if error_text else None,
+                        ),
+                    )
+                    conn.commit()
+                except Exception as e:
+                    logger.warning(
+                        "Failed to create error_events table inline: %s",
+                        e,
+                        exc_info=True,
+                    )
+                    conn.close()
+                    return jsonify({"error": "db_error", "message": str(e)}), 503
+            finally:
+                conn.close()
+
+        return jsonify({"status": "ok"}), 201
+
+    @app.route("/error_events", methods=["GET"])
+    def get_error_events():
+        session_id = request.args.get("session_id")
+        fingerprint = request.args.get("fingerprint")
+        if not session_id or not fingerprint:
+            return jsonify({"error": "session_id and fingerprint required"}), 400
+
+        conn = get_conn()
+        try:
+            try:
+                row = conn.execute(
+                    "SELECT COUNT(*) as cnt, MAX(ts) as last_ts, MAX(recalled_at) as last_recalled_at "
+                    "FROM error_events WHERE session_id=? AND fingerprint=?",
+                    (session_id, fingerprint),
+                ).fetchone()
+                count = row["cnt"] if row else 0
+                last_ts = row["last_ts"] if row else None
+                last_recalled_at = row["last_recalled_at"] if row else None
+            except sqlite3.OperationalError as e:
+                msg = str(e).lower()
+                if "no such table" in msg or "no such column" in msg:
+                    count = 0
+                    last_ts = None
+                    last_recalled_at = None
+                else:
+                    conn.close()
+                    return jsonify({"error": "db_error", "message": str(e)}), 503
+            return jsonify(
+                {
+                    "count": count,
+                    "last_ts": last_ts,
+                    "last_recalled_at": last_recalled_at,
+                }
+            )
+        finally:
+            conn.close()
+
+    @app.route("/error_events/recall", methods=["POST"])
+    def mark_error_recalled():
+        data = request.get_json(silent=True) or {}
+        session_id = data.get("session_id")
+        fingerprint = data.get("fingerprint")
+        if not session_id or not fingerprint:
+            return jsonify({"error": "session_id and fingerprint required"}), 400
+
+        with _write_lock:
+            conn = get_conn()
+            try:
+                conn.execute(
+                    "UPDATE error_events SET recalled_at=CURRENT_TIMESTAMP "
+                    "WHERE id=(SELECT id FROM error_events "
+                    "WHERE session_id=? AND fingerprint=? ORDER BY ts DESC LIMIT 1)",
+                    (session_id, fingerprint),
+                )
+                conn.commit()
+            except sqlite3.OperationalError as e:
+                msg = str(e).lower()
+                if "locked" in msg:
+                    logger.error("mark_error_recalled DB locked: %s", e)
+                    conn.close()
+                    return jsonify({"error": "db_locked", "message": str(e)}), 503
+                logger.debug("mark_error_recalled skipped: %s", e)
+            finally:
+                conn.close()
+
+        return jsonify({"status": "ok"}), 200
+
     return app
 
 
@@ -705,6 +965,14 @@ def main():
     logger.info("=" * 80)
 
     try:
+        migration_logger.info("Starting Forgememo v2 migration check...")
+        migration_logger.info("Platform: %s", sys.platform)
+        if sys.platform in ("darwin", "win32"):
+            migration_logger.info(
+                "Case-insensitive filesystem detected: project_id paths will be normalized"
+            )
+        else:
+            migration_logger.info("Case-sensitive filesystem: normalization skipped")
         logger.info("Initializing database schema...")
         init_db()
 

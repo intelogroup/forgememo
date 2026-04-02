@@ -8,10 +8,19 @@ import json
 import os
 from pathlib import Path
 
-CONFIG_PATH = Path(os.environ.get("FORGEMEM_CONFIG", Path.home() / ".forgemem" / "config.json"))
+CONFIG_PATH = Path(
+    os.environ.get("FORGEMEM_CONFIG", Path.home() / ".forgemem" / "config.json")
+)
 CREDITS_FLAG_PATH = CONFIG_PATH.parent / ".credits_exhausted"
 
-SUPPORTED_PROVIDERS = ("anthropic", "openai", "gemini", "ollama", "claude_code", "forgememo")
+SUPPORTED_PROVIDERS = (
+    "anthropic",
+    "openai",
+    "gemini",
+    "ollama",
+    "claude_code",
+    "forgememo",
+)
 
 DEFAULT_MODELS = {
     "anthropic": "claude-haiku-4-5-20251001",
@@ -36,6 +45,8 @@ def load() -> dict:
 
 def save(cfg: dict) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        os.chmod(CONFIG_PATH.parent, 0o700)
     CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
 
 
@@ -70,6 +81,7 @@ def detect_ollama() -> dict | None:
     Uses /api/tags — no auth required, 2s timeout to stay non-blocking.
     """
     import requests
+
     url = os.environ.get("OLLAMA_HOST", OLLAMA_DEFAULT_URL).rstrip("/")
     try:
         resp = requests.get(f"{url}/api/tags", timeout=2)
@@ -82,14 +94,20 @@ def detect_ollama() -> dict | None:
 
 
 def get_model(provider: str) -> str:
-    return load().get("model") or DEFAULT_MODELS.get(provider, DEFAULT_MODELS["anthropic"])
+    return load().get("model") or DEFAULT_MODELS.get(
+        provider, DEFAULT_MODELS["anthropic"]
+    )
 
 
 def set_provider(provider: str, api_key: str | None = None) -> None:
     if provider not in SUPPORTED_PROVIDERS:
-        raise ValueError(f"Unknown provider '{provider}'. Choose: {', '.join(SUPPORTED_PROVIDERS)}")
+        raise ValueError(
+            f"Unknown provider '{provider}'. Choose: {', '.join(SUPPORTED_PROVIDERS)}"
+        )
     if provider == "claude_code" and api_key:
-        raise ValueError("claude_code provider uses the `claude` CLI — no API key needed")
+        raise ValueError(
+            "claude_code provider uses the `claude` CLI — no API key needed"
+        )
     cfg = load()
     cfg["provider"] = provider
     if api_key:
@@ -107,9 +125,11 @@ def set_api_key(provider: str, api_key: str) -> None:
 # Sync helpers
 # ---------------------------------------------------------------------------
 
+
 def get_device_id() -> str:
     """Return this device's UUID, creating and persisting one if needed."""
     import uuid
+
     cfg = load()
     if "device_id" not in cfg:
         cfg["device_id"] = str(uuid.uuid4())
@@ -133,11 +153,14 @@ def set_last_sync_ts(ts: str) -> None:
 # Credits flag helpers
 # ---------------------------------------------------------------------------
 
+
 def set_credits_flag(balance_usd: float) -> None:
     """Write sentinel when forgemem inference hits 402 (credits exhausted)."""
     CREDITS_FLAG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CREDITS_FLAG_PATH.write_text(
-        json.dumps({"balance_usd": balance_usd, "ts": datetime.datetime.now().isoformat()})
+        json.dumps(
+            {"balance_usd": balance_usd, "ts": datetime.datetime.now().isoformat()}
+        )
     )
 
 

@@ -332,7 +332,7 @@ class TestSessionRecall:
             self._fake_daemon_get(
                 {
                     "/session_summaries": {"results": []},
-                    "/search": {
+                    "/recent": {
                         "results": [
                             {
                                 "title": "Auth pattern",

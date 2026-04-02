@@ -8,8 +8,10 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -174,6 +176,205 @@ def _daemon_get(path: str, params: dict | None = None) -> dict:
         return {}
 
 
+def _daemon_post(path: str, data: dict) -> dict:
+    """POST to daemon — never raises (hook must not crash host process)."""
+    if not DAEMON_URL and sys.platform != "win32":
+        try:
+            import requests_unixsocket
+
+            session = requests_unixsocket.Session()
+            socket_url = "http+unix://" + SOCKET_PATH.replace("/", "%2F")
+            resp = session.post(f"{socket_url}{path}", json=data, timeout=3)
+            if resp.ok:
+                return resp.json()
+        except Exception:
+            pass
+    try:
+        if DAEMON_URL:
+            url = DAEMON_URL.rstrip("/")
+        elif HTTP_PORT:
+            url = f"http://127.0.0.1:{HTTP_PORT}"
+        else:
+            return {}
+        resp = requests.post(f"{url}{path}", json=data, timeout=3)
+        return resp.json() if resp.ok else {}
+    except Exception:
+        return {}
+
+
+_ERROR_PATTERNS = re.compile(
+    r"(?:"
+    r"Traceback \(most recent call last\)"
+    r"|(?:^|\n)\s*(?:Error|ERROR|error)[\s:[]"
+    r"|(?:^|\n)\s*(?:FAILED|FAIL)\b"
+    r"|exit (?:code|status)\s*[1-9]"
+    r"|CalledProcessError"
+    r"|ModuleNotFoundError"
+    r"|ImportError"
+    r"|SyntaxError"
+    r"|TypeError"
+    r"|ValueError"
+    r"|KeyError"
+    r"|AttributeError"
+    r"|NameError"
+    r"|FileNotFoundError"
+    r"|PermissionError"
+    r"|RuntimeError"
+    r"|OSError"
+    r"|ConnectionError"
+    r"|TimeoutError"
+    r"|command not found"
+    r"|No such file or directory"
+    r"|npm ERR!"
+    r"|Cannot find module"
+    r"|Compilation failed"
+    r"|Build failed"
+    r"|undefined is not"
+    r"|is not defined"
+    r"|segmentation fault"
+    r"|panic:"
+    r"|fatal:"
+    r"|command interrupted"
+    r")",
+    re.IGNORECASE,
+)
+
+_FINGERPRINT_NOISE = re.compile(
+    r"(?:"
+    r"0x[0-9a-fA-F]+"
+    r"|line \d+"
+    r"|:\d+(?::\d+)?"
+    r"|/[\w./-]+"
+    r"|[A-Za-z]:\\[\w.\\-]+"
+    r"|\.{1,2}/[\w./-]+"
+    r"|<private>.*?</private>"
+    r"|\b\d{10,}\b"
+    r"|\b[0-9a-f]{8,}\b"
+    r"|\bat \w+\s*\(.*?\)"
+    r")",
+    re.DOTALL,
+)
+
+
+def _extract_error_text(payload: dict) -> str | None:
+    result = (
+        payload.get("tool_response")
+        or payload.get("tool_output")
+        or payload.get("tool_result")
+        or payload.get("toolResult")
+        or ""
+    )
+    if isinstance(result, dict):
+        parts = []
+        has_explicit_error = False
+        if result.get("error"):
+            parts.append(str(result["error"]))
+            has_explicit_error = True
+        if result.get("stderr"):
+            parts.append(str(result["stderr"]))
+        if result.get("stdout"):
+            parts.append(str(result["stdout"]))
+        if result.get("content"):
+            parts.append(str(result["content"]))
+        if result.get("output"):
+            parts.append(str(result["output"]))
+        exit_code = result.get("exitCode") or result.get("exit_code")
+        if exit_code:
+            try:
+                exit_code_int = int(exit_code)
+            except (ValueError, TypeError):
+                exit_code_int = None
+        else:
+            exit_code_int = None
+        if exit_code_int is not None and exit_code_int != 0:
+            parts.append(f"exit code {exit_code}")
+        elif exit_code and exit_code_int is None:
+            parts.append(f"exit code {exit_code}")
+        rci = result.get("returnCodeInterpretation")
+        if rci and isinstance(rci, str) and "error" in rci.lower():
+            parts.append(rci)
+        if result.get("interrupted"):
+            parts.append("command interrupted")
+            has_explicit_error = True
+        if exit_code_int is not None and exit_code_int != 0:
+            has_explicit_error = True
+        elif exit_code and exit_code_int is None:
+            has_explicit_error = True
+        result = "\n".join(parts)
+        if has_explicit_error and result:
+            return result
+    elif not isinstance(result, str):
+        result = str(result)
+    if not result:
+        return None
+    if _ERROR_PATTERNS.search(result):
+        return result
+    return None
+
+
+def _error_fingerprint(error_text: str) -> str:
+    lines = error_text.strip().splitlines()
+    key_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _ERROR_PATTERNS.search(stripped):
+            key_lines.append(stripped)
+        if len(key_lines) >= 3:
+            break
+    if not key_lines:
+        key_lines = [lines[0]] if lines else ["unknown"]
+    core = "\n".join(key_lines)
+    core = _FINGERPRINT_NOISE.sub("", core)
+    core = re.sub(r"\s+", " ", core).strip().lower()
+    return hashlib.sha256(core.encode()).hexdigest()[:16]
+
+
+def _extract_error_keywords(error_text: str) -> str:
+    lines = error_text.strip().splitlines()
+    key_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if _ERROR_PATTERNS.search(stripped):
+            key_lines.append(stripped)
+        if len(key_lines) >= 3:
+            break
+    if not key_lines:
+        key_lines = lines[:2]
+    text = " ".join(key_lines)
+    text = _FINGERPRINT_NOISE.sub("", text)
+    words = [w for w in re.findall(r"[a-zA-Z_]\w{2,}", text)]
+    seen = set()
+    unique = []
+    for w in words:
+        wl = w.lower()
+        if wl not in seen:
+            seen.add(wl)
+            unique.append(w)
+    return " ".join(unique[:12])
+
+
+_ERROR_RECALL_DEBOUNCE_SECS = int(
+    os.environ.get("FORGEMEMO_ERROR_DEBOUNCE_SECS", "300")
+)
+
+
+def _is_within_debounce(last_ts: str | None) -> bool:
+    if not last_ts:
+        return False
+    try:
+        from datetime import datetime, timezone
+
+        last_dt = datetime.strptime(last_ts, "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc
+        )
+        elapsed = (datetime.now(timezone.utc) - last_dt).total_seconds()
+        return elapsed < _ERROR_RECALL_DEBOUNCE_SECS
+    except Exception:
+        return False
+
+
 def _format_context_json(text: str, event_name: str) -> str:
     """Return platform-appropriate JSON for context injection."""
     if SOURCE_TOOL in ("claude-code", "gemini"):
@@ -199,7 +400,7 @@ def _handle_session_recall(payload: dict, event_name: str) -> int:
         return 0
     project_id = _resolve_project_id(payload)
     summaries = _daemon_get("/session_summaries", {"project_id": project_id, "k": 2})
-    search = _daemon_get("/search", {"q": "recent", "project_id": project_id, "k": 5})
+    recent = _daemon_get("/recent", {"project_id": project_id, "k": 5})
 
     parts = []
     for s in summaries.get("results", []):
@@ -207,8 +408,8 @@ def _handle_session_recall(payload: dict, event_name: str) -> int:
         parts.append(
             f"[Session {ts}] {s.get('request', '')} — {s.get('learnings', '')}"
         )
-    for r in search.get("results", []):
-        narrative = (r.get("narrative") or "")[:120]
+    for r in recent.get("results", []):
+        narrative = (r.get("narrative") or r.get("excerpt") or "")[:120]
         parts.append(f"[Memory] {r.get('title', '')}: {narrative}")
 
     if not parts:
@@ -286,9 +487,32 @@ _WRITE_TOOL_NAMES = {"Edit", "Write", "Bash", "NotebookEdit", "MultiEdit"}
 
 _POST_TOOL_USE_EVENTS = {
     "PostToolUse",  # Claude Code, Codex
-    "AfterTool",    # Gemini
-    "tool.done",    # OpenCode
+    "AfterTool",  # Gemini
+    "tool.done",  # OpenCode
 }
+
+
+def _extract_tool_content(tool_name: str, payload: dict) -> str:
+    """Build a human-readable content string from a tool payload."""
+    ti = payload.get("tool_input") or {}
+    tr = payload.get("tool_response") or {}
+    out = (tr.get("output") or "").strip()[:400]
+    if tool_name == "Bash":
+        cmd = (ti.get("command") or "").strip()
+        return f"$ {cmd}\n{out}" if out else f"$ {cmd}"
+    if tool_name in ("Edit", "MultiEdit"):
+        path = ti.get("file_path") or ti.get("path") or ""
+        old = (ti.get("old_string") or "")[:80].replace("\n", " ")
+        new = (ti.get("new_string") or "")[:80].replace("\n", " ")
+        return f"Edit {path}: -{old!r} +{new!r}" if old else f"Edit {path}"
+    if tool_name == "Write":
+        path = ti.get("file_path") or ""
+        content = (ti.get("content") or "")[:300]
+        return f"Write {path}: {content}"
+    if tool_name == "NotebookEdit":
+        path = ti.get("notebook_path") or ""
+        return f"NotebookEdit {path}: {out}"
+    return out or tool_name
 
 
 def _handle_post_tool_use(payload: dict, event_name: str) -> int:
@@ -296,7 +520,10 @@ def _handle_post_tool_use(payload: dict, event_name: str) -> int:
     tool_name = payload.get("tool_name") or payload.get("toolName") or ""
     if tool_name not in _WRITE_TOOL_NAMES:
         return 0
-    event = _normalize_event(event_name, payload)
+    # Enrich payload with extracted content so FTS and recall have something useful
+    enriched = dict(payload)
+    enriched.setdefault("content", _extract_tool_content(tool_name, payload))
+    event = _normalize_event(event_name, enriched)
     _post_event(event)
     return 0
 

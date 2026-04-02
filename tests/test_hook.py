@@ -48,6 +48,7 @@ from forgememo.hook import (
 # strip_private
 # ---------------------------------------------------------------------------
 
+
 class TestStripPrivate:
     def test_removes_private_tag(self):
         result = strip_private("hello <private>SECRET</private> world")
@@ -123,6 +124,7 @@ class TestStripPrivate:
 # _resolve_project_id
 # ---------------------------------------------------------------------------
 
+
 class TestResolveProjectId:
     def test_env_var_overrides_all(self, monkeypatch):
         monkeypatch.setenv("FORGEMEMO_PROJECT_ID", "/override/project")
@@ -153,6 +155,7 @@ class TestResolveProjectId:
 # ---------------------------------------------------------------------------
 # _normalize_event
 # ---------------------------------------------------------------------------
+
 
 class TestNormalizeEvent:
     def setup_method(self):
@@ -209,6 +212,7 @@ class TestNormalizeEvent:
         del payload["source_tool"]
         import importlib
         import forgememo.hook as hook_module
+
         importlib.reload(hook_module)
         event = hook_module._normalize_event("PostToolUse", payload)
         assert event["source_tool"] == "gemini"
@@ -229,6 +233,7 @@ class TestNormalizeEvent:
 # ---------------------------------------------------------------------------
 # _ensure_daemon
 # ---------------------------------------------------------------------------
+
 
 class TestEnsureDaemon:
     def test_returns_true_when_daemon_healthy(self, monkeypatch):
@@ -252,9 +257,11 @@ class TestEnsureDaemon:
             mock_resp.raise_for_status = MagicMock()
             return mock_resp
 
-        with patch("forgememo.hook.requests.get", side_effect=fake_get), \
-             patch("forgememo.hook.subprocess.Popen") as mock_popen, \
-             patch("forgememo.hook.time.sleep"):
+        with (
+            patch("forgememo.hook.requests.get", side_effect=fake_get),
+            patch("forgememo.hook.subprocess.Popen") as mock_popen,
+            patch("forgememo.hook.time.sleep"),
+        ):
             result = _ensure_daemon()
 
         assert result is True
@@ -263,10 +270,14 @@ class TestEnsureDaemon:
     def test_returns_false_when_daemon_never_starts(self, monkeypatch):
         import requests as _requests
 
-        with patch("forgememo.hook.requests.get",
-                   side_effect=_requests.exceptions.ConnectionError("refused")), \
-             patch("forgememo.hook.subprocess.Popen"), \
-             patch("forgememo.hook.time.sleep"):
+        with (
+            patch(
+                "forgememo.hook.requests.get",
+                side_effect=_requests.exceptions.ConnectionError("refused"),
+            ),
+            patch("forgememo.hook.subprocess.Popen"),
+            patch("forgememo.hook.time.sleep"),
+        ):
             result = _ensure_daemon()
 
         assert result is False
@@ -276,12 +287,14 @@ class TestEnsureDaemon:
 # _handle_post_tool_use
 # ---------------------------------------------------------------------------
 
+
 class TestPostToolUseHook:
     def test_write_tool_is_posted(self, monkeypatch):
         posted = []
         monkeypatch.setattr("forgememo.hook._post_event", lambda e: posted.append(e))
         _handle_post_tool_use(
-            {"tool_name": "Edit", "session_id": "s1", "project_id": "/tmp"}, "PostToolUse"
+            {"tool_name": "Edit", "session_id": "s1", "project_id": "/tmp"},
+            "PostToolUse",
         )
         assert len(posted) == 1
         assert posted[0]["tool_name"] == "Edit"
@@ -290,14 +303,18 @@ class TestPostToolUseHook:
         posted = []
         monkeypatch.setattr("forgememo.hook._post_event", lambda e: posted.append(e))
         for read_tool in ("Read", "Grep", "Glob", "WebSearch", "WebFetch"):
-            _handle_post_tool_use({"tool_name": read_tool, "session_id": "s1"}, "PostToolUse")
+            _handle_post_tool_use(
+                {"tool_name": read_tool, "session_id": "s1"}, "PostToolUse"
+            )
         assert len(posted) == 0
 
     def test_all_write_tools_captured(self, monkeypatch):
         posted = []
         monkeypatch.setattr("forgememo.hook._post_event", lambda e: posted.append(e))
         for tool in _WRITE_TOOL_NAMES:
-            _handle_post_tool_use({"tool_name": tool, "session_id": "s1"}, "PostToolUse")
+            _handle_post_tool_use(
+                {"tool_name": tool, "session_id": "s1"}, "PostToolUse"
+            )
         assert len(posted) == len(_WRITE_TOOL_NAMES)
 
     def test_unknown_tool_is_skipped(self, monkeypatch):
@@ -411,7 +428,11 @@ class TestPostEventTransport:
     def test_daemon_url_override_used(self, monkeypatch):
         calls = []
         monkeypatch.setattr(hook, "DAEMON_URL", "http://remote:8080")
-        monkeypatch.setattr(hook.requests, "post", lambda url, json=None, timeout=None: calls.append(url))
+        monkeypatch.setattr(
+            hook.requests,
+            "post",
+            lambda url, json=None, timeout=None: calls.append(url),
+        )
         _post_event(self._event())
         assert len(calls) == 1
         assert calls[0] == "http://remote:8080/events"
@@ -443,7 +464,9 @@ class TestPostEventTransport:
         monkeypatch.setattr(hook, "HTTP_PORT", "5555")
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(
-            hook.requests, "post", lambda url, json=None, timeout=None: captured.append(json)
+            hook.requests,
+            "post",
+            lambda url, json=None, timeout=None: captured.append(json),
         )
         evt = self._event()
         evt["payload"] = {"key": "val"}
@@ -467,7 +490,9 @@ class TestPostEventTransport:
         monkeypatch.setattr(hook, "DAEMON_URL", None)
         monkeypatch.setattr(hook, "HTTP_PORT", "5555")
         monkeypatch.setattr(
-            hook.requests, "post", lambda url, json=None, timeout=None: http_calls.append(url)
+            hook.requests,
+            "post",
+            lambda url, json=None, timeout=None: http_calls.append(url),
         )
         _post_event(self._event())
         assert len(http_calls) == 1
@@ -487,7 +512,9 @@ class TestDaemonGet:
         monkeypatch.setattr(hook, "DAEMON_URL", None)
         monkeypatch.setattr(hook, "HTTP_PORT", "5555")
         monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setattr(hook.requests, "get", lambda url, params=None, timeout=None: mock_resp)
+        monkeypatch.setattr(
+            hook.requests, "get", lambda url, params=None, timeout=None: mock_resp
+        )
         result = _daemon_get("/search", {"q": "test"})
         assert result == {"results": []}
 
@@ -497,7 +524,9 @@ class TestDaemonGet:
         monkeypatch.setattr(hook, "DAEMON_URL", None)
         monkeypatch.setattr(hook, "HTTP_PORT", "5555")
         monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setattr(hook.requests, "get", lambda url, params=None, timeout=None: mock_resp)
+        monkeypatch.setattr(
+            hook.requests, "get", lambda url, params=None, timeout=None: mock_resp
+        )
         assert _daemon_get("/search") == {}
 
     def test_http_exception_returns_empty_dict(self, monkeypatch):
@@ -565,7 +594,9 @@ class TestDaemonGet:
         mock_resp = MagicMock()
         mock_resp.ok = True
         mock_resp.json.return_value = {"fallback": True}
-        monkeypatch.setattr(hook.requests, "get", lambda url, params=None, timeout=None: mock_resp)
+        monkeypatch.setattr(
+            hook.requests, "get", lambda url, params=None, timeout=None: mock_resp
+        )
         result = _daemon_get("/search")
         assert result == {"fallback": True}
 
@@ -587,7 +618,7 @@ class TestSessionRecallAdditional:
             "_daemon_get",
             lambda path, params=None: (
                 {"results": [{"title": "T", "narrative": long_narrative}]}
-                if path == "/search"
+                if path == "/recent"
                 else {"results": []}
             ),
         )
@@ -608,7 +639,9 @@ class TestSessionRecallAdditional:
             lambda path, params=None: {"results": []},
         )
         monkeypatch.setattr(hook, "SOURCE_TOOL", "claude-code")
-        rc = _handle_session_recall({"session": "alt-session-id", "cwd": "/proj"}, "SessionStart")
+        rc = _handle_session_recall(
+            {"session": "alt-session-id", "cwd": "/proj"}, "SessionStart"
+        )
         assert rc == 0
 
     def test_multiple_summaries_all_included(self, monkeypatch, capsys):
@@ -618,8 +651,16 @@ class TestSessionRecallAdditional:
             lambda path, params=None: (
                 {
                     "results": [
-                        {"ts": "2026-01-01T00:00:00", "request": "TaskA", "learnings": "LearnA"},
-                        {"ts": "2026-01-02T00:00:00", "request": "TaskB", "learnings": "LearnB"},
+                        {
+                            "ts": "2026-01-01T00:00:00",
+                            "request": "TaskA",
+                            "learnings": "LearnA",
+                        },
+                        {
+                            "ts": "2026-01-02T00:00:00",
+                            "request": "TaskB",
+                            "learnings": "LearnB",
+                        },
                     ]
                 }
                 if path == "/session_summaries"
@@ -675,7 +716,9 @@ class TestSessionEndAdditional:
         monkeypatch.setattr(hook, "HTTP_PORT", "5555")
         # On POSIX these constants don't exist; define them so the win32 branch runs
         monkeypatch.setattr(hook.subprocess, "DETACHED_PROCESS", 8, raising=False)
-        monkeypatch.setattr(hook.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, raising=False)
+        monkeypatch.setattr(
+            hook.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, raising=False
+        )
 
         rc = _handle_session_end({"session_id": "s1", "cwd": "C:\\proj"})
         assert rc == 0
@@ -707,7 +750,9 @@ class TestSessionEndAdditional:
 
         spawned = []
         monkeypatch.setattr(_shutil, "which", lambda _: "/usr/bin/forgememo")
-        monkeypatch.setattr(hook.subprocess, "Popen", lambda cmd, **kw: spawned.append(cmd))
+        monkeypatch.setattr(
+            hook.subprocess, "Popen", lambda cmd, **kw: spawned.append(cmd)
+        )
         monkeypatch.setattr(sys, "platform", "linux")
 
         rc = _handle_session_end({"cwd": "/proj"})
@@ -776,7 +821,9 @@ class TestCrossAgentDispatch:
     def test_unknown_event_falls_through_to_post_event(self, monkeypatch):
         posted = []
         monkeypatch.setattr(hook, "_post_event", lambda e: posted.append(e))
-        monkeypatch.setattr(sys, "stdin", io.StringIO('{"session_id":"s","project_id":"/p","seq":1}'))
+        monkeypatch.setattr(
+            sys, "stdin", io.StringIO('{"session_id":"s","project_id":"/p","seq":1}')
+        )
         with patch("sys.argv", ["hook.py", "SomeCustomEvent"]):
             rc = hook.main()
         assert rc == 0
