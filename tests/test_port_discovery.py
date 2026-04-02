@@ -16,10 +16,8 @@ class TestReadPort:
         monkeypatch.setenv("FORGEMEMO_HTTP_PORT", "8888")
 
         from forgememo import port as port_module
-        import importlib
 
         with patch.object(port_module, "PORT_FILE", port_file):
-            importlib.reload(port_module)
             result = port_module.read_port()
 
         assert result == 8888

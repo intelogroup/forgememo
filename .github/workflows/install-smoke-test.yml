@@ -73,31 +73,38 @@ jobs:
           print('MCP registered OK')
           "
 
-      # ── Verify daemon is healthy (daemon was started by init) ───────
-      # On CI, the daemon might be starting asynchronously. Give it time and verify.
+      # ── Start daemon ─────────────────────────────────────────────
+      - name: Start daemon
+        shell: bash
+        run: |
+          nohup python -m forgememo.daemon > /tmp/forgememo_daemon.log 2>&1 &
+          echo "Daemon PID: $!"
+        env:
+          FORGEMEMO_HTTP_PORT: "5555"
+
+      # ── Verify daemon is healthy ──────────────────────────────────
       - name: Verify daemon health
         shell: bash
         run: |
-          # Give the daemon time to start
-          sleep 10
-          # Check if port 5555 is listening
-          if python -c "
-            import socket
-            try:
-              s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-              s.settimeout(1)
-              s.connect(('127.0.0.1', 5555))
-              s.close()
-              print('port_open')
-            except:
-              pass
-          " 2>/dev/null | grep -q "port_open"; then
-            # Port is open, verify /health
-            python -c "import requests; r=requests.get('http://127.0.0.1:5555/health',timeout=10); assert r.json().get('ok')" && echo "Daemon healthy" || echo "Port open but health check failed"
-          else
-            echo "ERROR: Daemon HTTP port not ready after 10s - daemon likely failed to start"
-            exit 1
-          fi
+          python -c "
+          import socket, time, sys, requests
+          for i in range(30):
+              try:
+                  s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                  s.settimeout(1)
+                  s.connect(('127.0.0.1', 5555))
+                  s.close()
+                  print(f'Port ready after {i+1}s')
+                  break
+              except Exception:
+                  time.sleep(1)
+          else:
+              print('ERROR: Daemon port not ready after 30s')
+              sys.exit(1)
+          r = requests.get('http://127.0.0.1:5555/health', timeout=10)
+          assert r.json().get('ok'), f'Health check failed: {r.text}'
+          print('Daemon healthy')
+          "
         env:
           FORGEMEMO_HTTP_PORT: "5555"
 

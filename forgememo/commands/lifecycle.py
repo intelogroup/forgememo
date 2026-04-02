@@ -217,8 +217,8 @@ def _do_start(
     if sys.platform == "win32":
         forgememo_bin = shutil.which("forgememo") or "forgememo"
         http_port = str(read_port())
-        task_cmd = f'cmd /c "set FORGEMEMO_HTTP_PORT={http_port} && {forgememo_bin} daemon"'
-        worker_cmd = f'cmd /c "set FORGEMEMO_HTTP_PORT={http_port} && {forgememo_bin} worker"'
+        task_cmd = f'cmd /c "set FORGEMEMO_HTTP_PORT={http_port} && \\"{forgememo_bin}\\" daemon"'
+        worker_cmd = f'cmd /c "set FORGEMEMO_HTTP_PORT={http_port} && \\"{forgememo_bin}\\" worker"'
         for tn, tr in [("Forgememo Daemon", task_cmd), ("Forgememo Worker", worker_cmd)]:
             r = subprocess.run(
                 ["schtasks", "/create", "/tn", tn, "/tr", tr, "/sc", "ONLOGON", "/f"],
@@ -235,7 +235,17 @@ def _do_start(
             env=env,
             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
         )
-        console.print(f"[green]Daemon started[/] on http://127.0.0.1:{http_port}")
+        import time as _time
+        import urllib.request as _urllib
+        for _i in range(10):
+            try:
+                _urllib.urlopen(f"http://127.0.0.1:{http_port}/health", timeout=1)
+                console.print(f"[green]Daemon started and healthy[/] on http://127.0.0.1:{http_port}")
+                break
+            except Exception:
+                _time.sleep(1)
+        else:
+            console.print("[yellow]Daemon spawned but health check timed out[/] — check logs at %TEMP%\\forgememo_daemon.log")
         raise typer.Exit(0)
 
     if sys.platform != "darwin":

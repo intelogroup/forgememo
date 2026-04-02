@@ -59,9 +59,9 @@ worker.py     mcp_server.py
 
 **Transport in tests**: Always set `FORGEMEMO_MOCK_TRANSPORT=1` and `FORGEMEMO_DISABLE_BREAKER=1` in test environments. The `conftest.py` does this automatically; `mcp_server.py` respects these flags.
 
-**Port precedence**: `FORGEMEMO_HTTP_PORT` env var > `~/.forgememo/daemon.port` lockfile (future) > default `5555`.
+**Port precedence**: `FORGEMEMO_HTTP_PORT` env var > `~/.forgememo/daemon.port` lockfile > default `5555`.
 
-**Multi-provider inference**: `inference.py` routes to `anthropic`, `openai`, `gemini`, `ollama`, `claude_code`, or `forgememo` (managed) based on `~/.forgemem/config.json`. Config path is `FORGEMEM_CONFIG`, DB path is `FORGEMEM_DB`.
+**Multi-provider inference**: `inference.py` routes to `anthropic`, `openai`, `gemini`, `ollama`, `claude_code`, or `forgememo` (managed) based on `~/.forgememo/config.json`. Config path is `FORGEMEM_CONFIG`, DB path is `FORGEMEM_DB`.
 
 ## Key Files
 
