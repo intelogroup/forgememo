@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.4.10] — 2026-04-02
+
+### Fixed
+- Codex skill path now uses 2026 convention: `~/.codex/skills/forgememo-skill.json` (not root `~/.codex/`)
+- Supports `$CODEX_HOME` environment variable for custom installations
+- Cleans up legacy file at root on migration
+- Provides manual install fallback when permission denied
+
 ## [0.4.1] — 2026-04-01
 
 ### Added
