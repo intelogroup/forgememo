@@ -95,8 +95,8 @@ jobs:
             # Port is open, verify /health
             python -c "import requests; r=requests.get('http://127.0.0.1:5555/health',timeout=10); assert r.json().get('ok')" && echo "Daemon healthy" || echo "Port open but health check failed"
           else
-            echo "Note: Daemon HTTP port not ready (may be running on socket only or still starting)"
-            exit 0
+            echo "ERROR: Daemon HTTP port not ready after 10s - daemon likely failed to start"
+            exit 1
           fi
         env:
           FORGEMEMO_HTTP_PORT: "5555"

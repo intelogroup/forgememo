@@ -27,6 +27,8 @@ import threading
 import time
 from typing import Any
 
+from forgememo.port import delete_port, write_port
+
 from forgememo.storage import get_conn, init_db
 from pathlib import Path
 
@@ -118,36 +120,53 @@ migration_logger.propagate = False
 _write_lock = threading.Lock()
 
 _ERROR_EVENTS_CIRCUIT_BREAKER_FAIL_LIMIT = 3
+_ERROR_EVENTS_HALF_OPEN_INTERVAL = 60  # seconds before allowing a probe attempt
 _error_events_consecutive_failures = 0
 _error_events_disabled = False
+_error_events_tripped_at: float | None = None
 _DISABLE_BREAKER = os.environ.get("FORGEMEMO_DISABLE_BREAKER") == "1"
 
 
 def _error_events_circuit_open() -> bool:
-    """Check if error_events circuit breaker is open (DISABLED)."""
+    """Check if error_events circuit breaker is open (DISABLED).
+
+    Returns False during the half-open probe window so one request can attempt
+    recovery. If the probe succeeds, _error_events_record_success closes the
+    circuit. If it fails, _error_events_record_failure re-opens it.
+    """
     if _DISABLE_BREAKER:
         return False
-    return _error_events_disabled
+    if not _error_events_disabled:
+        return False
+    # Half-open: allow one probe after the interval
+    if _error_events_tripped_at is not None:
+        if time.time() - _error_events_tripped_at >= _ERROR_EVENTS_HALF_OPEN_INTERVAL:
+            return False
+    return True
 
 
 def _error_events_record_failure() -> None:
     """Record a failure and trip circuit breaker if limit exceeded."""
-    global _error_events_consecutive_failures, _error_events_disabled
+    global _error_events_consecutive_failures, _error_events_disabled, _error_events_tripped_at
     _error_events_consecutive_failures += 1
     if _error_events_consecutive_failures >= _ERROR_EVENTS_CIRCUIT_BREAKER_FAIL_LIMIT:
+        was_disabled = _error_events_disabled
         _error_events_disabled = True
-        logger.error(
-            "error_events circuit breaker OPEN: module DISABLED after %d consecutive failures",
-            _error_events_consecutive_failures,
-        )
+        _error_events_tripped_at = time.time()
+        if not was_disabled:
+            logger.error(
+                "error_events circuit breaker OPEN: module DISABLED after %d consecutive failures",
+                _error_events_consecutive_failures,
+            )
 
 
 def _error_events_record_success() -> None:
     """Record success and reset circuit breaker."""
-    global _error_events_consecutive_failures, _error_events_disabled
+    global _error_events_consecutive_failures, _error_events_disabled, _error_events_tripped_at
     _error_events_consecutive_failures = 0
     if _error_events_disabled:
         _error_events_disabled = False
+        _error_events_tripped_at = None
         logger.info("error_events circuit breaker CLOSED: module re-enabled")
 
 
@@ -1066,8 +1085,12 @@ def main():
                 sys.exit(1)
             logger.info(f"Starting HTTP server on 127.0.0.1:{port} (Windows mode)...")
             http_server = make_server("127.0.0.1", port, app, threaded=True)
+            write_port(port)
             logger.info("Health check: curl http://127.0.0.1:%s/health", port)
-            http_server.serve_forever()
+            try:
+                http_server.serve_forever()
+            finally:
+                delete_port()
         else:
             # POSIX: UNIX socket primary, HTTP optional
             socket_host = f"unix://{SOCKET_PATH}"
@@ -1086,6 +1109,7 @@ def main():
                 else:
                     logger.info(f"Starting HTTP server on 127.0.0.1:{port}...")
                     http_server = make_server("127.0.0.1", port, app, threaded=True)
+                    write_port(port)
                     threading.Thread(
                         target=http_server.serve_forever, daemon=True
                     ).start()
@@ -1099,7 +1123,10 @@ def main():
                     "Health check (http): curl http://127.0.0.1:%s/health", HTTP_PORT
                 )
 
-            socket_server.serve_forever()
+            try:
+                socket_server.serve_forever()
+            finally:
+                delete_port()
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)

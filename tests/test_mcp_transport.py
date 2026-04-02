@@ -29,7 +29,6 @@ def test_daemon_get_uses_socket_when_available(monkeypatch):
             return _Resp(payload={"ok": True})
 
     monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
-    monkeypatch.setattr(mcp_server, "HTTP_PORT", None)
     monkeypatch.setattr(mcp_server, "_socket_session", lambda: _Session())
 
     data = mcp_server._daemon_get("/health", params={"a": "b"})
@@ -46,7 +45,7 @@ def test_daemon_get_falls_back_to_http(monkeypatch):
         return _Resp(payload={"ok": True})
 
     monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
-    monkeypatch.setattr(mcp_server, "HTTP_PORT", "7777")
+    monkeypatch.setattr(mcp_server, "_http_port", lambda: "7777")
     monkeypatch.setattr(mcp_server, "_socket_session", lambda: None)
     monkeypatch.setattr(mcp_server.requests, "get", fake_get)
 
@@ -55,9 +54,10 @@ def test_daemon_get_falls_back_to_http(monkeypatch):
     assert called["url"] == "http://127.0.0.1:7777/health"
 
 
-def test_daemon_get_raises_when_no_transport(monkeypatch):
+def test_daemon_get_raises_when_daemon_unreachable(monkeypatch):
+    """With no socket and nothing listening on the port, raises RuntimeError."""
     monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
-    monkeypatch.setattr(mcp_server, "HTTP_PORT", None)
+    monkeypatch.setattr(mcp_server, "_http_port", lambda: "19996")  # nothing there
     monkeypatch.setattr(mcp_server, "_socket_session", lambda: None)
 
     with pytest.raises(RuntimeError):
@@ -75,7 +75,6 @@ def test_daemon_post_uses_socket_when_available(monkeypatch):
             return _Resp(payload={"ok": True})
 
     monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
-    monkeypatch.setattr(mcp_server, "HTTP_PORT", None)
     monkeypatch.setattr(mcp_server, "_socket_session", lambda: _Session())
 
     data = mcp_server._daemon_post("/events", payload={"a": 1})
@@ -92,7 +91,7 @@ def test_daemon_post_falls_back_to_http(monkeypatch):
         return _Resp(payload={"ok": True})
 
     monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
-    monkeypatch.setattr(mcp_server, "HTTP_PORT", "7777")
+    monkeypatch.setattr(mcp_server, "_http_port", lambda: "7777")
     monkeypatch.setattr(mcp_server, "_socket_session", lambda: None)
     monkeypatch.setattr(mcp_server.requests, "post", fake_post)
 
@@ -101,9 +100,10 @@ def test_daemon_post_falls_back_to_http(monkeypatch):
     assert called["url"] == "http://127.0.0.1:7777/events"
 
 
-def test_daemon_post_raises_when_no_transport(monkeypatch):
+def test_daemon_post_raises_when_daemon_unreachable(monkeypatch):
+    """With no socket and nothing listening on the port, raises RuntimeError."""
     monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
-    monkeypatch.setattr(mcp_server, "HTTP_PORT", None)
+    monkeypatch.setattr(mcp_server, "_http_port", lambda: "19995")  # nothing there
     monkeypatch.setattr(mcp_server, "_socket_session", lambda: None)
 
     with pytest.raises(RuntimeError):
@@ -137,7 +137,7 @@ class TestWindowsTransport:
 
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
-        monkeypatch.setattr(mcp_server, "HTTP_PORT", "5555")
+        monkeypatch.setattr(mcp_server, "_http_port", lambda: "5555")
         monkeypatch.setattr(mcp_server, "_socket_session", lambda: self._make_session(called, "get"))
         monkeypatch.setattr(mcp_server.requests, "get", fake_get)
 
@@ -155,7 +155,7 @@ class TestWindowsTransport:
 
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
-        monkeypatch.setattr(mcp_server, "HTTP_PORT", "5555")
+        monkeypatch.setattr(mcp_server, "_http_port", lambda: "5555")
         monkeypatch.setattr(mcp_server, "_socket_session", lambda: self._make_session(called, "post"))
         monkeypatch.setattr(mcp_server.requests, "post", fake_post)
 
@@ -174,17 +174,23 @@ class TestWindowsTransport:
 
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(mcp_server, "DAEMON_URL", "http://remote:9999")
-        monkeypatch.setattr(mcp_server, "HTTP_PORT", None)
         monkeypatch.setattr(mcp_server.requests, "get", fake_get)
 
         mcp_server._daemon_get("/health")
         assert called["url"] == "http://remote:9999/health"
 
-    def test_daemon_get_raises_when_no_http_port_on_windows(self, monkeypatch):
-        """On Windows with no HTTP port and no DAEMON_URL, must raise."""
+    def test_daemon_get_uses_discovered_port_on_windows(self, monkeypatch):
+        """On Windows with no DAEMON_URL, uses discovered port via read_port()."""
+        called = {}
+
+        def fake_get(url, params=None, timeout=5):
+            called["url"] = url
+            return _Resp(payload={"ok": True})
+
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
-        monkeypatch.setattr(mcp_server, "HTTP_PORT", None)
+        monkeypatch.setattr(mcp_server, "_http_port", lambda: "5555")
+        monkeypatch.setattr(mcp_server.requests, "get", fake_get)
 
-        with pytest.raises(RuntimeError):
-            mcp_server._daemon_get("/health")
+        mcp_server._daemon_get("/health")
+        assert called["url"] == "http://127.0.0.1:5555/health"

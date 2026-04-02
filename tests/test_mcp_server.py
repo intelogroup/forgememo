@@ -72,7 +72,7 @@ def test_daemon_get_raises_actionable_error_on_connection_refused(monkeypatch):
     import requests as _requests
 
     monkeypatch.setattr(mcp_server, "DAEMON_URL", None)
-    monkeypatch.setattr(mcp_server, "HTTP_PORT", "5555")
+    monkeypatch.setattr(mcp_server, "_http_port", lambda: "5555")
     # Disable socket path
     monkeypatch.setattr(mcp_server, "_socket_session", lambda: None)
 

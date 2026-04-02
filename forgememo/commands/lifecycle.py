@@ -12,6 +12,7 @@ from typing import Optional
 import typer
 from typing_extensions import Annotated
 
+from forgememo.port import read_port
 from forgememo.commands._shared import (
     CHECK,
     CROSS,
@@ -215,7 +216,7 @@ def _do_start(
 
     if sys.platform == "win32":
         forgememo_bin = shutil.which("forgememo") or "forgememo"
-        http_port = os.environ.get("FORGEMEMO_HTTP_PORT", "5555")
+        http_port = str(read_port())
         task_cmd = f'cmd /c "set FORGEMEMO_HTTP_PORT={http_port} && {forgememo_bin} daemon"'
         worker_cmd = f'cmd /c "set FORGEMEMO_HTTP_PORT={http_port} && {forgememo_bin} worker"'
         for tn, tr in [("Forgememo Daemon", task_cmd), ("Forgememo Worker", worker_cmd)]:
@@ -506,7 +507,7 @@ def stop():
     if sys.platform == "win32":
         import socket as _sock
 
-        http_port = os.environ.get("FORGEMEMO_HTTP_PORT", "5555")
+        http_port = str(read_port())
         try:
             with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as _s:
                 _s.settimeout(1)
@@ -777,7 +778,7 @@ def status(
                 daemon_val = f"[dim]{CROSS} not installed[/]  \u2192 run: [cyan]forgememo start[/]"
         table.add_row("Daemon", daemon_val)
     elif sys.platform == "win32":
-        _http_port = os.environ.get("FORGEMEMO_HTTP_PORT", "5555")
+        _http_port = str(read_port())
         import socket as _sock
         try:
             with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as _s:
@@ -857,11 +858,11 @@ def doctor():
 
     daemon_url = None
     if sys.platform == "win32":
-        http_port = os.environ.get("FORGEMEMO_HTTP_PORT", "5555")
-        daemon_url = f"http://127.0.0.1:{http_port}"
+        daemon_url = f"http://127.0.0.1:{read_port()}"
     elif os.environ.get("FORGEMEMO_DAEMON_URL"):
         daemon_url = os.environ["FORGEMEMO_DAEMON_URL"]
     elif os.environ.get("FORGEMEMO_HTTP_PORT"):
+        # Explicit env override takes priority — use as-is without lockfile lookup
         daemon_url = f"http://127.0.0.1:{os.environ['FORGEMEMO_HTTP_PORT']}"
     else:
         socket_path = os.environ.get(
