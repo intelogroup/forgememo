@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.4.11] — 2026-04-02
+
+### Fixed
+- Windows daemon stabilization window extended from 3s to 10s to catch late Job Object kills after parent exits
+- Port re-check after stabilization confirms daemon is actually listening, not just PID alive
+- Log breakaway fallback warning when `CREATE_BREAKAWAY_FROM_JOB` is unavailable
+- Crash diagnostic shows last 100 log lines (was 50)
+
 ## [0.4.10] — 2026-04-02
 
 ### Fixed

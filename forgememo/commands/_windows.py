@@ -74,7 +74,7 @@ def _tail_log(n: int = 50) -> str:
 
 
 def _print_crash_diagnostic() -> None:
-    tail = _tail_log(50)
+    tail = _tail_log(100)
     console.print("[bold red]Daemon crashed during startup.[/]")
     console.print("-" * 40)
     if tail:
@@ -126,8 +126,11 @@ def _win_start_daemon(http_port: str, py: str) -> subprocess.Popen:
             )
         except OSError:
             # Job Object was created without JOB_OBJECT_LIMIT_BREAKAWAY_OK;
-            # fall back without breakaway (daemon may still be killed on parent
-            # exit in restricted environments, but this is better than failing).
+            # fall back without breakaway — daemon may be killed on parent exit.
+            console.print(
+                "[yellow]Note: CREATE_BREAKAWAY_FROM_JOB not available, "
+                "daemon may be killed when parent exits.[/]"
+            )
             proc = subprocess.Popen(
                 [py, "-m", "forgememo", "daemon"],
                 creationflags=_base_flags,
@@ -148,7 +151,8 @@ def _win_health_check(
 
     Returns True only after:
     1. The /health endpoint responds with ok=true.
-    2. The process remains alive for a 3-second stabilization window.
+    2. The process remains alive for a 10-second stabilization window.
+    3. The port is still listening after the stabilization window.
 
     Prints a crash diagnostic (log tail) and returns False on any failure.
     """
@@ -183,12 +187,23 @@ def _win_health_check(
         _print_crash_diagnostic()
         return False
 
-    # Phase 2: stabilization — confirm the process stays alive for 3 seconds
-    for _ in range(6):
+    # Phase 2: stabilization — confirm the process stays alive for 10 seconds.
+    # Longer window catches late Job Object kills after parent exits.
+    for _ in range(20):  # 20 × 0.5s = 10s
         time.sleep(0.5)
         if not _win_pid_alive(proc.pid):
+            console.print("[red]Daemon exited during stabilization window.[/]")
+            _print_crash_diagnostic()
+            return False
+
+    # Phase 3: re-verify port is still listening after stabilization.
+    import socket as _socket
+
+    with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+        s.settimeout(2)
+        if s.connect_ex(("127.0.0.1", int(http_port))) != 0:
             console.print(
-                "[red]Daemon exited during stabilization window.[/]"
+                "[red]Daemon PID alive but port closed after stabilization.[/]"
             )
             _print_crash_diagnostic()
             return False
