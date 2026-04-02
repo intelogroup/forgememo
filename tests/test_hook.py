@@ -260,7 +260,7 @@ class TestEnsureDaemon:
         with (
             patch("forgememo.hook.requests.get", side_effect=fake_get),
             patch("forgememo.hook.subprocess.Popen") as mock_popen,
-            patch("forgememo.hook.time.sleep"),
+            patch("forgememo.daemon.wait_for_port", return_value=True),
         ):
             result = _ensure_daemon()
 
@@ -276,7 +276,7 @@ class TestEnsureDaemon:
                 side_effect=_requests.exceptions.ConnectionError("refused"),
             ),
             patch("forgememo.hook.subprocess.Popen"),
-            patch("forgememo.hook.time.sleep"),
+            patch("forgememo.daemon.wait_for_port", return_value=False),
         ):
             result = _ensure_daemon()
 

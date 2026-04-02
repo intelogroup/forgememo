@@ -33,6 +33,8 @@ _PRIVATE_RE = None
 
 def _ensure_daemon() -> bool:
     """Check daemon health; auto-restart if unreachable. Returns True if alive."""
+    from forgememo.daemon import wait_for_port
+
     port = HTTP_PORT or "5555"
     url = f"http://127.0.0.1:{port}/health"
     try:
@@ -41,19 +43,14 @@ def _ensure_daemon() -> bool:
     except Exception:
         pass
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             [sys.executable, "-m", "forgememo.daemon"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        for _ in range(5):
-            time.sleep(1)
-            try:
-                requests.get(url, timeout=1).raise_for_status()
-                return True
-            except Exception:
-                pass
+        if wait_for_port("127.0.0.1", int(port), timeout=10, proc=proc):
+            return True
     except Exception:
         pass
     return False

@@ -19,10 +19,12 @@ import json
 import logging
 import os
 import signal
+import socket
 import sqlite3
 import sys
 import tempfile
 import threading
+import time
 from typing import Any
 
 from forgememo.storage import get_conn, init_db
@@ -48,6 +50,29 @@ SOCKET_PATH = os.environ.get(
     "FORGEMEMO_SOCKET", os.path.join(tempfile.gettempdir(), "forgememo.sock")
 )
 HTTP_PORT = os.environ.get("FORGEMEMO_HTTP_PORT", "5555")
+
+
+def wait_for_port(
+    host: str = "127.0.0.1",
+    port: int = 5555,
+    timeout: float = 30,
+    proc: Any = None,
+) -> bool:
+    """Poll until port is listening. Returns True on success, False on timeout.
+
+    If proc is provided, also checks that the subprocess is still alive.
+    """
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        if proc is not None and proc.poll() is not None:
+            return False
+        try:
+            with socket.create_connection((host, port), timeout=1):
+                return True
+        except (ConnectionRefusedError, socket.timeout, OSError):
+            pass
+        time.sleep(0.5)
+    return False
 
 
 def _canonicalize_project_id(path: str) -> str:

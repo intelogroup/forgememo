@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 
 import pytest
 
@@ -467,3 +468,56 @@ class TestMainDispatch:
             rc = hook.main()
         assert rc == 0
         assert len(posted) == 1
+
+
+class TestWaitForPort:
+    def test_returns_true_when_port_listening(self):
+        import socket
+        import threading
+        from forgememo.daemon import wait_for_port
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        port = sock.getsockname()[1]
+
+        def accept_loop():
+            sock.accept()
+            time.sleep(0.5)
+
+        t = threading.Thread(target=accept_loop, daemon=True)
+        t.start()
+
+        result = wait_for_port("127.0.0.1", port, timeout=5)
+        sock.close()
+        assert result is True
+
+    def test_returns_false_on_timeout(self):
+        from forgememo.daemon import wait_for_port
+
+        result = wait_for_port("127.0.0.1", 59999, timeout=2)
+        assert result is False
+
+    def test_returns_false_when_proc_dies(self):
+        import subprocess
+        from forgememo.daemon import wait_for_port
+
+        proc = subprocess.Popen(
+            ["python", "-c", "import time; time.sleep(3)"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        result = wait_for_port("127.0.0.1", 59997, timeout=2, proc=proc)
+        proc.wait()
+        assert result is False
+
+    def test_respects_timeout_parameter(self):
+        import time
+        from forgememo.daemon import wait_for_port
+
+        start = time.time()
+        result = wait_for_port("127.0.0.1", 59998, timeout=3)
+        elapsed = time.time() - start
+        assert result is False
+        assert 2.5 <= elapsed <= 4
