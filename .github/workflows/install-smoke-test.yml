@@ -73,8 +73,41 @@ jobs:
           print('MCP registered OK')
           "
 
-      # ── Start daemon explicitly with HTTP port ───────────────────
-      - name: Start daemon (background, POSIX)
+      # ── Start daemon and verify health on Windows ──────────────────
+      - name: Start daemon and verify (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          $env:FORGEMEMO_HTTP_PORT = "5555"
+          # Start daemon as background job
+          $job = Start-Job -ScriptBlock {
+            param($port)
+            python -m forgememo.daemon
+          } -ArgumentList "5555"
+          # Wait for daemon to start
+          Start-Sleep -Seconds 8
+          # Verify daemon is running
+          $daemon = Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*forgememo*" }
+          if (-not $daemon) {
+            Write-Host "Daemon process not found"
+            exit 1
+          }
+          Write-Host "Daemon process running with PID $($daemon.Id)"
+          # Now verify health directly
+          $r = Invoke-RestMethod -Uri "http://127.0.0.1:5555/health" -TimeoutSec 10
+          if ($r.ok -eq $true) {
+            Write-Host "Health OK"
+          } else {
+            Write-Host "Health check failed"
+            exit 1
+          }
+        env:
+          FORGEMEMO_HTTP_PORT: "5555"
+
+      # ── Start daemon and verify health on POSIX ───────────────────
+      - name: Start daemon and verify (POSIX)
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -91,40 +124,8 @@ jobs:
           assert wait_for_port('127.0.0.1', 5555, timeout=30), 'Daemon failed to start'
           print('Daemon healthy')
           "
-        env:
-          FORGEMEMO_HTTP_PORT: "5555"
-
-      - name: Start daemon (background, Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 2
-          $env:FORGEMEMO_HTTP_PORT = "5555"
-          # Start daemon as background job with output capture
-          $job = Start-Job -ScriptBlock {
-            param($port)
-            python -m forgememo.daemon
-          } -ArgumentList "5555"
-          # Wait for daemon to start
-          Start-Sleep -Seconds 8
-          # Verify daemon is running
-          $daemon = Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*forgememo*" }
-          if (-not $daemon) {
-            Write-Host "Daemon process not found"
-            exit 1
-          }
-          Write-Host "Daemon process running with PID $($daemon.Id)"
-          python -c "
-          from forgememo.daemon import wait_for_port
-          assert wait_for_port('127.0.0.1', 5555, timeout=30), 'Daemon failed to start'
-          print('Daemon healthy')
-          "
-        env:
-          FORGEMEMO_HTTP_PORT: "5555"
-
-      - name: Verify daemon health
-        run: python -c "import requests; r=requests.get('http://127.0.0.1:5555/health',timeout=10); assert r.json()['ok'], 'unhealthy'; print('Health OK')"
+          # Verify health
+          python -c "import requests; r=requests.get('http://127.0.0.1:5555/health',timeout=10); assert r.json()['ok'], 'unhealthy'; print('Health OK')"
         env:
           FORGEMEMO_HTTP_PORT: "5555"
 
