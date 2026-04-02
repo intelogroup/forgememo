@@ -5,6 +5,7 @@ Tests for error_events API endpoints (POST/GET/recall).
 import json
 import os
 import sqlite3
+import sys
 import threading
 from pathlib import Path
 
@@ -82,9 +83,14 @@ class TestPostErrorEvents:
         conn.close()
 
         assert row is not None
-        assert row["project_id"].endswith("users/developer/projecta") or row[
-            "project_id"
-        ].endswith("users\\developer\\projecta")
+        # On macOS/Windows: path is lowercased
+        # On Linux: path is unchanged (case-sensitive filesystem)
+        if sys.platform in ("darwin", "win32"):
+            assert row["project_id"].endswith("users/developer/projecta") or row[
+                "project_id"
+            ].endswith("users\\developer\\projecta")
+        else:
+            assert "Developer" in row["project_id"] or "developer" in row["project_id"]
 
     def test_missing_session_id_returns_400(self, client):
         """POST without session_id returns 400."""

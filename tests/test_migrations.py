@@ -71,6 +71,10 @@ class TestMigrationLedger:
 class TestMigrateToV2:
     """Test project_id normalization on case-insensitive filesystems."""
 
+    @pytest.mark.skipif(
+        sys.platform not in ("darwin", "win32"),
+        reason="Normalization only on macOS/Windows",
+    )
     def test_normalizes_mixed_case_on_darwin(self, isolated_db, monkeypatch):
         """Project IDs are lowercased on macOS."""
         monkeypatch.setattr(sys, "platform", "darwin")
@@ -118,6 +122,7 @@ class TestMigrateToV2:
         assert all(r == r.lower() for r in rows)
         assert "/users/developer/projecta" in rows[0]
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows-specific test")
     def test_normalizes_mixed_case_on_windows(self, isolated_db, monkeypatch):
         """Project IDs are lowercased on Windows."""
         monkeypatch.setattr(sys, "platform", "win32")
@@ -260,6 +265,10 @@ class TestMigrateToV2:
 class TestMigrationIntegration:
     """Integration tests for full migration flow."""
 
+    @pytest.mark.skipif(
+        sys.platform not in ("darwin", "win32"),
+        reason="Migration flow test for macOS/Windows",
+    )
     def test_full_migration_flow(self, isolated_db, monkeypatch):
         """Test complete migration from v0 to v2."""
         monkeypatch.setattr(sys, "platform", "darwin")
