@@ -82,10 +82,14 @@ jobs:
           cleanup() { kill $(jobs -p) 2>/dev/null || true; }
           trap cleanup EXIT
 
-          # Kill any existing processes on port 5555
-          pkill -9 -f "forgememo" 2>/dev/null || true
+          # Aggressively kill any process using port 5555
+          # Try multiple methods to ensure we get the port
+          fuser -k 5555/tcp 2>/dev/null || true
           lsof -ti:5555 | xargs -r kill -9 2>/dev/null || true
-          sleep 2
+          pkill -9 -f "forgememo" 2>/dev/null || true
+          # Also kill any Python that might be holding the port
+          pkill -9 -f "python.*forgememo" 2>/dev/null || true
+          sleep 3
 
           # Start daemon directly (bypasses launchctl async scheduling)
           export FORGEMEMO_HTTP_PORT=5555
