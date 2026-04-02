@@ -78,6 +78,9 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
+          # Kill any existing daemon on port 5555 to avoid conflicts
+          fuser -k 5555/tcp 2>/dev/null || true
+          sleep 1
           export FORGEMEMO_HTTP_PORT=5555
           python -m forgememo.daemon &
           python -c "
@@ -92,6 +95,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # Kill any existing daemon on port 5555 to avoid conflicts
+          Get-NetTCPConnection -LocalPort 5555 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+          Start-Sleep -Seconds 1
           $env:FORGEMEMO_HTTP_PORT = "5555"
           Start-Process -NoNewWindow python -ArgumentList "-m","forgememo.daemon"
           python -c "
