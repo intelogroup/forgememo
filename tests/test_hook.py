@@ -251,7 +251,7 @@ class TestEnsureDaemon:
 
         def fake_get(url, timeout=1):
             call_count["n"] += 1
-            if call_count["n"] <= 2:
+            if call_count["n"] <= 1:
                 raise _requests.exceptions.ConnectionError("refused")
             mock_resp = MagicMock()
             mock_resp.raise_for_status = MagicMock()
@@ -439,7 +439,7 @@ class TestPostEventTransport:
 
     def test_http_exception_swallowed(self, monkeypatch):
         monkeypatch.setattr(hook, "DAEMON_URL", None)
-        monkeypatch.setattr(hook, "HTTP_PORT", "5555")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(
             hook.requests,
@@ -449,19 +449,21 @@ class TestPostEventTransport:
         # Must not raise
         _post_event(self._event())
 
-    def test_no_url_no_post(self, monkeypatch):
+    def test_no_daemon_url_uses_discovered_port(self, monkeypatch):
+        """With no DAEMON_URL, _post_event posts to the discovered port."""
         calls = []
         monkeypatch.setattr(hook, "DAEMON_URL", None)
-        monkeypatch.setattr(hook, "HTTP_PORT", None)
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setattr(hook.requests, "post", lambda *a, **kw: calls.append(True))
+        monkeypatch.setattr(hook.requests, "post", lambda *a, **kw: calls.append(a[0]))
         _post_event(self._event())
-        assert calls == []
+        assert len(calls) == 1
+        assert "5555" in calls[0]
 
     def test_payload_serialized_as_json_string(self, monkeypatch):
         captured = []
         monkeypatch.setattr(hook, "DAEMON_URL", None)
-        monkeypatch.setattr(hook, "HTTP_PORT", "5555")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(
             hook.requests,
@@ -488,7 +490,7 @@ class TestPostEventTransport:
         monkeypatch.setitem(sys.modules, "requests_unixsocket", fake_module)
         monkeypatch.setattr(sys, "platform", "linux")
         monkeypatch.setattr(hook, "DAEMON_URL", None)
-        monkeypatch.setattr(hook, "HTTP_PORT", "5555")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         monkeypatch.setattr(
             hook.requests,
             "post",
@@ -510,7 +512,7 @@ class TestDaemonGet:
         mock_resp.ok = True
         mock_resp.json.return_value = {"results": []}
         monkeypatch.setattr(hook, "DAEMON_URL", None)
-        monkeypatch.setattr(hook, "HTTP_PORT", "5555")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(
             hook.requests, "get", lambda url, params=None, timeout=None: mock_resp
@@ -522,7 +524,7 @@ class TestDaemonGet:
         mock_resp = MagicMock()
         mock_resp.ok = False
         monkeypatch.setattr(hook, "DAEMON_URL", None)
-        monkeypatch.setattr(hook, "HTTP_PORT", "5555")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(
             hook.requests, "get", lambda url, params=None, timeout=None: mock_resp
@@ -531,7 +533,7 @@ class TestDaemonGet:
 
     def test_http_exception_returns_empty_dict(self, monkeypatch):
         monkeypatch.setattr(hook, "DAEMON_URL", None)
-        monkeypatch.setattr(hook, "HTTP_PORT", "5555")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(
             hook.requests,
@@ -556,9 +558,10 @@ class TestDaemonGet:
         assert result == {"x": 1}
         assert calls[0].startswith("http://remote:9000")
 
-    def test_no_url_returns_empty_dict(self, monkeypatch):
+    def test_no_url_falls_back_to_discovered_port(self, monkeypatch):
+        """With no DAEMON_URL, _daemon_get uses the discovered port (returns {} on failure)."""
         monkeypatch.setattr(hook, "DAEMON_URL", None)
-        monkeypatch.setattr(hook, "HTTP_PORT", None)
+        monkeypatch.setattr(hook, "_http_port", lambda: "19997")  # nothing listening
         monkeypatch.setattr(sys, "platform", "win32")
         assert _daemon_get("/search") == {}
 
@@ -589,7 +592,7 @@ class TestDaemonGet:
         monkeypatch.setitem(sys.modules, "requests_unixsocket", fake_module)
         monkeypatch.setattr(sys, "platform", "linux")
         monkeypatch.setattr(hook, "DAEMON_URL", None)
-        monkeypatch.setattr(hook, "HTTP_PORT", "5555")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
 
         mock_resp = MagicMock()
         mock_resp.ok = True
@@ -713,7 +716,7 @@ class TestSessionEndAdditional:
         monkeypatch.setattr(_shutil, "which", lambda _: "C:\\bin\\forgememo.exe")
         monkeypatch.setattr(hook.subprocess, "Popen", fake_popen)
         monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setattr(hook, "HTTP_PORT", "5555")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         # On POSIX these constants don't exist; define them so the win32 branch runs
         monkeypatch.setattr(hook.subprocess, "DETACHED_PROCESS", 8, raising=False)
         monkeypatch.setattr(

@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import time
+import unittest.mock
 
 import pytest
 
@@ -102,43 +103,46 @@ def test_mcp_server_socket_path_env_override(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# HTTP_PORT defaults: "5555" on all platforms (HTTP-first)
+# Port discovery: read_port() returns 5555 by default, env var overrides
 # ---------------------------------------------------------------------------
 
 
-def test_mcp_server_http_port_default_posix(monkeypatch):
+def test_read_port_default(monkeypatch, tmp_path):
+    """read_port() returns 5555 when no env var and no lockfile."""
+    from forgememo import port as port_module
+
     monkeypatch.delenv("FORGEMEMO_HTTP_PORT", raising=False)
-    monkeypatch.setattr(sys, "platform", "linux")
-    importlib.reload(mcp_server)
-    assert mcp_server.HTTP_PORT == "5555"
+    with unittest.mock.patch.object(port_module, "PORT_FILE", tmp_path / "daemon.port"):
+        result = port_module.read_port()
+    assert result == 5555
 
 
-def test_mcp_server_http_port_default_windows(monkeypatch):
-    monkeypatch.delenv("FORGEMEMO_HTTP_PORT", raising=False)
-    monkeypatch.setattr(sys, "platform", "win32")
-    importlib.reload(mcp_server)
-    assert mcp_server.HTTP_PORT == "5555"
+def test_read_port_env_override(monkeypatch, tmp_path):
+    """FORGEMEMO_HTTP_PORT env var overrides lockfile and default."""
+    from forgememo import port as port_module
 
-
-def test_hook_http_port_default_posix(monkeypatch):
-    monkeypatch.delenv("FORGEMEMO_HTTP_PORT", raising=False)
-    monkeypatch.setattr(sys, "platform", "linux")
-    importlib.reload(hook)
-    assert hook.HTTP_PORT == "5555"
-
-
-def test_hook_http_port_default_windows(monkeypatch):
-    monkeypatch.delenv("FORGEMEMO_HTTP_PORT", raising=False)
-    monkeypatch.setattr(sys, "platform", "win32")
-    importlib.reload(hook)
-    assert hook.HTTP_PORT == "5555"
-
-
-def test_http_port_env_overrides_windows_default(monkeypatch):
     monkeypatch.setenv("FORGEMEMO_HTTP_PORT", "9999")
-    monkeypatch.setattr(sys, "platform", "win32")
-    importlib.reload(mcp_server)
-    assert mcp_server.HTTP_PORT == "9999"
+    with unittest.mock.patch.object(port_module, "PORT_FILE", tmp_path / "daemon.port"):
+        result = port_module.read_port()
+    assert result == 9999
+
+
+def test_hook_http_port_uses_discovery(monkeypatch, tmp_path):
+    """hook._http_port() delegates to read_port()."""
+    from forgememo import port as port_module
+
+    monkeypatch.setenv("FORGEMEMO_HTTP_PORT", "7777")
+    with unittest.mock.patch.object(port_module, "PORT_FILE", tmp_path / "daemon.port"):
+        assert hook._http_port() == "7777"
+
+
+def test_mcp_server_http_port_uses_discovery(monkeypatch, tmp_path):
+    """mcp_server._http_port() delegates to read_port()."""
+    from forgememo import port as port_module
+
+    monkeypatch.setenv("FORGEMEMO_HTTP_PORT", "8888")
+    with unittest.mock.patch.object(port_module, "PORT_FILE", tmp_path / "daemon.port"):
+        assert mcp_server._http_port() == "8888"
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +159,7 @@ def test_post_event_skips_socket_on_windows(monkeypatch):
 
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(hook, "DAEMON_URL", None)
-    monkeypatch.setattr(hook, "HTTP_PORT", "5555")
+    monkeypatch.setattr(hook, "_http_port", lambda: "5555")
     monkeypatch.setattr(hook.requests, "post", fake_post)
 
     event = {
@@ -183,7 +187,7 @@ def test_post_event_uses_socket_on_posix(monkeypatch):
 
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(hook, "DAEMON_URL", None)
-    monkeypatch.setattr(hook, "HTTP_PORT", None)
+    monkeypatch.setattr(hook, "_http_port", lambda: "5555")
 
     # Patch requests_unixsocket at the hook module level via monkeypatching the import
     import unittest.mock as mock

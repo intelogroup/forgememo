@@ -33,8 +33,13 @@ DAEMON_URL = os.environ.get("FORGEMEMO_DAEMON_URL")
 SOCKET_PATH = os.environ.get(
     "FORGEMEMO_SOCKET", os.path.join(tempfile.gettempdir(), "forgememo.sock")
 )
-HTTP_PORT = os.environ.get("FORGEMEMO_HTTP_PORT", "5555")
 MOCK_TRANSPORT = os.environ.get("FORGEMEMO_MOCK_TRANSPORT") == "1"
+
+from forgememo.port import read_port as _read_port  # noqa: E402
+
+
+def _http_port() -> str:
+    return str(_read_port())
 
 
 def _socket_session():
@@ -109,9 +114,7 @@ def _daemon_get(path: str, params: dict | None = None) -> dict:
                 raise
             except Exception:
                 pass  # fall through to HTTP
-    if not DAEMON_URL and not HTTP_PORT:
-        raise RuntimeError("daemon transport unavailable (no socket and no HTTP port)")
-    url = DAEMON_URL.rstrip("/") if DAEMON_URL else f"http://127.0.0.1:{HTTP_PORT}"
+    url = DAEMON_URL.rstrip("/") if DAEMON_URL else f"http://127.0.0.1:{_http_port()}"
     try:
         resp = requests.get(f"{url}{path}", params=params, timeout=5)
         if not resp.ok:
@@ -141,9 +144,7 @@ def _daemon_post(path: str, payload: dict) -> dict:
                 raise
             except Exception:
                 pass  # fall through to HTTP
-    if not DAEMON_URL and not HTTP_PORT:
-        raise RuntimeError("daemon transport unavailable (no socket and no HTTP port)")
-    url = DAEMON_URL.rstrip("/") if DAEMON_URL else f"http://127.0.0.1:{HTTP_PORT}"
+    url = DAEMON_URL.rstrip("/") if DAEMON_URL else f"http://127.0.0.1:{_http_port()}"
     try:
         resp = requests.post(f"{url}{path}", json=payload, timeout=5)
         if not resp.ok:

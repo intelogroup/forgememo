@@ -20,13 +20,18 @@ from typing import Any
 
 import requests
 
+from forgememo.port import read_port
 
 DAEMON_URL = os.environ.get("FORGEMEMO_DAEMON_URL")
 SOCKET_PATH = os.environ.get(
     "FORGEMEMO_SOCKET", os.path.join(tempfile.gettempdir(), "forgememo.sock")
 )
-HTTP_PORT = os.environ.get("FORGEMEMO_HTTP_PORT", "5555")
 SOURCE_TOOL = os.environ.get("FORGEMEMO_SOURCE_TOOL", "unknown")
+
+
+def _http_port() -> str:
+    """Return the current daemon port as a string, using the discovery chain."""
+    return str(read_port())
 
 _PRIVATE_RE = None
 
@@ -35,7 +40,7 @@ def _ensure_daemon() -> bool:
     """Check daemon health; auto-restart if unreachable. Returns True if alive."""
     from forgememo.daemon import wait_for_port
 
-    port = HTTP_PORT or "5555"
+    port = _http_port()
     url = f"http://127.0.0.1:{port}/health"
     try:
         requests.get(url, timeout=1).raise_for_status()
@@ -50,7 +55,11 @@ def _ensure_daemon() -> bool:
             start_new_session=True,
         )
         if wait_for_port("127.0.0.1", int(port), timeout=10, proc=proc):
-            return True
+            try:
+                requests.get(url, timeout=2).raise_for_status()
+                return True
+            except Exception:
+                pass
     except Exception:
         pass
     return False
@@ -135,12 +144,7 @@ def _post_event(event: dict) -> None:
 
     # Fallback HTTP
     try:
-        if DAEMON_URL:
-            url = DAEMON_URL.rstrip("/")
-        elif HTTP_PORT:
-            url = f"http://127.0.0.1:{HTTP_PORT}"
-        else:
-            return
+        url = DAEMON_URL.rstrip("/") if DAEMON_URL else f"http://127.0.0.1:{_http_port()}"
         requests.post(f"{url}/events", json=event, timeout=1.5)
     except Exception:
         # Hook must never crash the host process
@@ -161,12 +165,7 @@ def _daemon_get(path: str, params: dict | None = None) -> dict:
         except Exception:
             pass
     try:
-        if DAEMON_URL:
-            url = DAEMON_URL.rstrip("/")
-        elif HTTP_PORT:
-            url = f"http://127.0.0.1:{HTTP_PORT}"
-        else:
-            return {}
+        url = DAEMON_URL.rstrip("/") if DAEMON_URL else f"http://127.0.0.1:{_http_port()}"
         resp = requests.get(f"{url}{path}", params=params, timeout=3)
         return resp.json() if resp.ok else {}
     except Exception:
@@ -187,12 +186,7 @@ def _daemon_post(path: str, data: dict) -> dict:
         except Exception:
             pass
     try:
-        if DAEMON_URL:
-            url = DAEMON_URL.rstrip("/")
-        elif HTTP_PORT:
-            url = f"http://127.0.0.1:{HTTP_PORT}"
-        else:
-            return {}
+        url = DAEMON_URL.rstrip("/") if DAEMON_URL else f"http://127.0.0.1:{_http_port()}"
         resp = requests.post(f"{url}{path}", json=data, timeout=3)
         return resp.json() if resp.ok else {}
     except Exception:
@@ -216,7 +210,6 @@ def _is_cancelled_signal(exit_code: str) -> bool:
     lower = str(exit_code).lower()
     return lower in {
         "sigint",
-        "sigterm",
         "cancelled",
         "canceled",
         "keyboard interrupt",
@@ -248,8 +241,11 @@ def _parse_exit_code(exit_code: Any) -> tuple[int | None, bool, bool]:
     if _EXIT_CODE_NUMERIC.match(code_str):
         try:
             val = int(code_str)
-            if code_str.startswith(("0x", "0X")):
-                val = int(code_str, 16)
+            # Negative values are POSIX signal codes (e.g. -2=SIGINT, -15=SIGTERM).
+            # -2 (SIGINT) is user cancellation; others are errors.
+            if val < 0:
+                is_cancelled = val == -2  # -2 = SIGINT on POSIX
+                return val, True, is_cancelled
             return val, val != 0, False
         except ValueError:
             pass
@@ -357,7 +353,6 @@ def _extract_error_text(payload: dict) -> str | None:
             _, is_error, was_cancelled = _parse_exit_code(exit_code)
             if is_error and not was_cancelled:
                 has_explicit_error = True
-            has_explicit_error = True
         result = "\n".join(parts)
         if has_explicit_error and result:
             return result
@@ -500,7 +495,7 @@ def _handle_session_end(payload: dict) -> int:
     ]
     try:
         if sys.platform == "win32":
-            env = {**os.environ, "FORGEMEMO_HTTP_PORT": HTTP_PORT or "5555"}
+            env = {**os.environ, "FORGEMEMO_HTTP_PORT": _http_port()}
             subprocess.Popen(
                 cmd,
                 env=env,

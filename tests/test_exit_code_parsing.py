@@ -2,7 +2,6 @@
 Tests for exit_code parsing and error detection in hook.py.
 """
 
-import pytest
 
 from forgememo.hook import (
     _extract_error_text,
@@ -133,10 +132,9 @@ class TestExitCodeParsing:
         assert "exit code 1" in result
 
     def test_exit_code_sigint_is_cancelled(self):
-        """SIGINT is recognized as user cancellation."""
+        """SIGINT is user cancellation — not reported as an error event."""
         result = _extract_error_text(_make_payload(exitCode="SIGINT"))
-        assert result is not None
-        assert "command cancelled" in result
+        assert result is None
 
     def test_exit_code_sigterm_handled(self):
         """SIGTERM signal is recognized."""

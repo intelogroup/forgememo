@@ -2,7 +2,6 @@
 Tests for error_events circuit breaker.
 """
 
-import pytest
 
 
 class TestCircuitBreaker:
@@ -10,10 +9,6 @@ class TestCircuitBreaker:
 
     def test_circuit_breaker_initially_closed(self):
         """Circuit breaker starts in closed (enabled) state."""
-        from forgememo.daemon import (
-            _error_events_circuit_open,
-            _error_events_consecutive_failures,
-        )
         import forgememo.daemon as daemon_module
         import importlib
 
@@ -71,11 +66,28 @@ class TestCircuitBreaker:
         daemon_module._error_events_record_success()
         assert daemon_module._error_events_circuit_open() is False
 
+    def test_circuit_breaker_half_open_after_interval(self):
+        """Circuit breaker enters half-open state after probe interval."""
+        import time
+        import forgememo.daemon as daemon_module
+        import importlib
+
+        importlib.reload(daemon_module)
+
+        for _ in range(3):
+            daemon_module._error_events_record_failure()
+        assert daemon_module._error_events_circuit_open() is True
+
+        # Simulate time passing beyond the probe interval
+        daemon_module._error_events_tripped_at = (
+            time.time() - daemon_module._ERROR_EVENTS_HALF_OPEN_INTERVAL - 1
+        )
+        assert daemon_module._error_events_circuit_open() is False  # half-open: allow probe
+
     def test_circuit_breaker_returns_503_when_open(self):
         """POST returns 503 when circuit breaker is open."""
         import os
         import tempfile
-        import threading
         from pathlib import Path
 
         import forgememo.daemon as daemon_module

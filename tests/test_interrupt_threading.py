@@ -58,7 +58,7 @@ class TestDaemonPostResilience:
 
         monkeypatch.setattr("requests.post", fake_post)
         monkeypatch.setattr(hook, "DAEMON_URL", "http://127.0.0.1:1")
-        monkeypatch.setattr(hook, "HTTP_PORT", "1")
+        monkeypatch.setattr(hook, "_http_port", lambda: "1")
         result = hook._daemon_post(
             "/error_events", {"session_id": "s1", "fingerprint": "fp"}
         )
@@ -75,7 +75,7 @@ class TestDaemonPostResilience:
         monkeypatch.setattr(
             hook, "DAEMON_URL", "http://not-a-real-host-12345.local:9999"
         )
-        monkeypatch.setattr(hook, "HTTP_PORT", "")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         result = hook._daemon_post("/test", {"key": "val"})
         assert result == {}
 
@@ -88,13 +88,13 @@ class TestDaemonPostResilience:
 
         monkeypatch.setattr("requests.post", fake_post)
         monkeypatch.setattr(hook, "DAEMON_URL", "http://127.0.0.1:5555")
-        monkeypatch.setattr(hook, "HTTP_PORT", "5555")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         result = hook._daemon_post("/test", {"key": "val"})
         assert result == {}
 
     def test_no_daemon_url_and_no_port(self, monkeypatch):
         monkeypatch.setattr(hook, "DAEMON_URL", "")
-        monkeypatch.setattr(hook, "HTTP_PORT", "")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         if sys.platform == "win32":
             result = hook._daemon_post("/test", {})
             assert result == {}
@@ -130,7 +130,7 @@ class TestDaemonGetResilience:
 
         monkeypatch.setattr("requests.get", fake_get)
         monkeypatch.setattr(hook, "DAEMON_URL", "http://127.0.0.1:1")
-        monkeypatch.setattr(hook, "HTTP_PORT", "1")
+        monkeypatch.setattr(hook, "_http_port", lambda: "1")
         result = hook._daemon_get(
             "/error_events", {"session_id": "s1", "fingerprint": "fp"}
         )
@@ -145,7 +145,7 @@ class TestDaemonGetResilience:
 
         monkeypatch.setattr("requests.get", fake_get)
         monkeypatch.setattr(hook, "DAEMON_URL", "http://127.0.0.1:5555")
-        monkeypatch.setattr(hook, "HTTP_PORT", "5555")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         result = hook._daemon_get("/test")
         assert result == {}
 
@@ -169,7 +169,7 @@ class TestDaemonGetResilience:
 
 class TestEnsureDaemonResilience:
     def test_unreachable_daemon_returns_false(self, monkeypatch):
-        monkeypatch.setattr(hook, "HTTP_PORT", "1")
+        monkeypatch.setattr(hook, "_http_port", lambda: "1")
         monkeypatch.setattr(
             subprocess,
             "Popen",
@@ -180,7 +180,7 @@ class TestEnsureDaemonResilience:
 
     def test_popen_failure_returns_false(self, monkeypatch):
         """If subprocess.Popen raises, _ensure_daemon returns False."""
-        monkeypatch.setattr(hook, "HTTP_PORT", "1")
+        monkeypatch.setattr(hook, "_http_port", lambda: "1")
         monkeypatch.setattr(
             subprocess,
             "Popen",
@@ -338,7 +338,7 @@ class TestThreadSafetyDaemonComms:
         errors = []
 
         monkeypatch.setattr(hook, "DAEMON_URL", "")
-        monkeypatch.setattr(hook, "HTTP_PORT", "")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         monkeypatch.setattr(hook, "SOCKET_PATH", "/nonexistent/socket.sock")
 
         def do_post(i):
@@ -360,7 +360,7 @@ class TestThreadSafetyDaemonComms:
     def test_concurrent_posts_all_return_empty_on_no_daemon(self, monkeypatch):
         """All concurrent posts should gracefully return {} when no daemon running."""
         monkeypatch.setattr(hook, "DAEMON_URL", "")
-        monkeypatch.setattr(hook, "HTTP_PORT", "")
+        monkeypatch.setattr(hook, "_http_port", lambda: "5555")
         monkeypatch.setattr(hook, "SOCKET_PATH", "/nonexistent/socket.sock")
 
         results = []
