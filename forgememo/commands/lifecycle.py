@@ -78,24 +78,46 @@ def _prompt_provider_setup(yes: bool, force: bool = False) -> None:
     if fm_cfg.load().get("provider") is not None and not force:
         return
 
+    claude_detected = shutil.which("claude") is not None
+
     if yes or not sys.stdin.isatty():
-        console.print(
-            "Provider picker requires a real terminal.\n"
-            "Ask the user to run:  [cyan]forgememo config -i[/]"
-        )
+        # Non-interactive: auto-select best zero-config provider.
+        auto = "claude_code" if claude_detected else "forgememo"
+        _configure_provider_noninteractive(auto)
+        if claude_detected:
+            console.print(
+                f"[green]Provider auto-set to claude_code[/] (Claude CLI detected — no key needed)."
+            )
+        else:
+            console.print(
+                "[green]Provider auto-set to forgememo[/] (managed — no key needed). "
+                "Run [cyan]forgememo config -i[/] to switch."
+            )
         return
 
     import questionary
 
-    _choices = [
-        questionary.Choice(
-            "forgememo   (recommended — works with any AI tool, sign in once, no key)",
-            value="forgememo",
-        ),
-        questionary.Choice(
-            "claude_code (Claude subscription via `claude` CLI — no API key needed)",
-            value="claude_code",
-        ),
+    if claude_detected:
+        _claude_label = "claude_code [detected — Claude CLI found, no key needed]"
+        _choices = [
+            questionary.Choice(_claude_label, value="claude_code"),
+            questionary.Choice(
+                "forgememo   (works with any AI tool, sign in once, no key)",
+                value="forgememo",
+            ),
+        ]
+    else:
+        _choices = [
+            questionary.Choice(
+                "forgememo   (recommended — works with any AI tool, sign in once, no key)",
+                value="forgememo",
+            ),
+            questionary.Choice(
+                "claude_code (Claude subscription via `claude` CLI — no API key needed)",
+                value="claude_code",
+            ),
+        ]
+    _choices += [
         questionary.Choice(
             "ollama     (local, free, fully private — needs ollama running)", value="ollama"
         ),
@@ -104,10 +126,11 @@ def _prompt_provider_setup(yes: bool, force: bool = False) -> None:
         ),
         questionary.Choice("openai     (BYOK — needs OPENAI_API_KEY)", value="openai"),
         questionary.Choice("gemini     (BYOK — needs GEMINI_API_KEY)", value="gemini"),
-        questionary.Choice(
-            "skip for now  (configure later with forgememo config)", value=None
-        ),
     ]
+
+    if claude_detected:
+        console.print("[dim]Claude CLI detected — claude_code is the zero-config option.[/]")
+
     provider = questionary.select(
         "Choose an inference provider for memory distillation:",
         choices=_choices,
@@ -115,8 +138,9 @@ def _prompt_provider_setup(yes: bool, force: bool = False) -> None:
     ).ask()
 
     if not provider:
+        # questionary.select() returns None if the user hits Ctrl-C
         console.print(
-            "[dim]Skipped — run [cyan]forgememo config[/] to set a provider later.[/]"
+            "[dim]No provider selected — run [cyan]forgememo config -i[/] to set one.[/]"
         )
         return
 
@@ -362,7 +386,7 @@ def init(
         None,
         "--provider",
         "-p",
-        help="Provider: anthropic | openai | gemini | ollama | forgememo",
+        help="Provider: claude_code | forgememo | anthropic | openai | gemini | ollama",
     ),
 ):
     """Initialize DB, register MCP server, and detect agent skills."""

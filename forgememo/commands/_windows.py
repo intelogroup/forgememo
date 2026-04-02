@@ -10,6 +10,11 @@ Design decisions:
 - CREATE_NO_WINDOW: py.exe launcher bug (cpython#85785) means DETACHED_PROCESS
   alone can still flash a console; CREATE_NO_WINDOW prevents it and also
   ensures the daemon survives the parent PowerShell/CMD window closing.
+- CREATE_BREAKAWAY_FROM_JOB: Windows 8+ places child processes in the parent's
+  Job Object by default. When the parent exits, all Job Object members are
+  terminated — regardless of DETACHED_PROCESS. Breaking out of the Job Object
+  prevents this. Falls back silently if the Job Object was created without
+  JOB_OBJECT_LIMIT_BREAKAWAY_OK.
 - _win_pid_alive uses ctypes.OpenProcess: os.kill(pid, 0) is not supported on
   Windows (Python bug tracker #14480 — no POSIX signal-0 equivalent).
 """
@@ -32,6 +37,11 @@ console = Console()
 # PROCESS_QUERY_LIMITED_INFORMATION — enough to check if a PID is alive
 # without requiring elevated privileges when querying same-user processes.
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+# CREATE_BREAKAWAY_FROM_JOB — Windows API flag, not exposed in subprocess module.
+# Allows the child process to escape the parent's Job Object so it survives
+# after the parent exits. Requires JOB_OBJECT_LIMIT_BREAKAWAY_OK on the Job.
+_CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 
 
 def _win_log_path() -> Path:
@@ -96,19 +106,33 @@ def _win_start_daemon(http_port: str, py: str) -> subprocess.Popen:
 
     log_fd = open(log, "a", encoding="utf-8")
     try:
-        proc = subprocess.Popen(
-            [py, "-m", "forgememo", "daemon"],
+        _base_flags = (
+            subprocess.DETACHED_PROCESS
+            | subprocess.CREATE_NEW_PROCESS_GROUP
+            | subprocess.CREATE_NO_WINDOW
+        )
+        _popen_kwargs: dict = dict(
             env=env,
-            creationflags=(
-                subprocess.DETACHED_PROCESS
-                | subprocess.CREATE_NEW_PROCESS_GROUP
-                | subprocess.CREATE_NO_WINDOW
-            ),
             stdin=subprocess.DEVNULL,
             stdout=log_fd,
             stderr=log_fd,
             close_fds=False,  # child must inherit log_fd
         )
+        try:
+            proc = subprocess.Popen(
+                [py, "-m", "forgememo", "daemon"],
+                creationflags=_base_flags | _CREATE_BREAKAWAY_FROM_JOB,
+                **_popen_kwargs,
+            )
+        except OSError:
+            # Job Object was created without JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+            # fall back without breakaway (daemon may still be killed on parent
+            # exit in restricted environments, but this is better than failing).
+            proc = subprocess.Popen(
+                [py, "-m", "forgememo", "daemon"],
+                creationflags=_base_flags,
+                **_popen_kwargs,
+            )
     finally:
         log_fd.close()  # parent no longer needs the handle
 

@@ -200,7 +200,7 @@ def _do_post_auth_setup(jwt: str) -> list:
 
 def config(
     provider: Optional[str] = typer.Argument(
-        None, help="Provider: anthropic | openai | gemini | ollama | forgememo"
+        None, help="Provider: claude_code | forgememo | anthropic | openai | gemini | ollama"
     ),
     key: Optional[str] = typer.Option(None, "--key", "-k", help="API key for the provider"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Override default model"),

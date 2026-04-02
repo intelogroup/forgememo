@@ -6,10 +6,13 @@ Forgememo background worker — distills raw events into distilled_summaries.
 from __future__ import annotations
 
 import json
+import logging
 import time
 
 from forgememo import inference
 from forgememo.storage import get_conn
+
+logger = logging.getLogger(__name__)
 
 MAX_DISTILL_ATTEMPTS = 3
 BATCH_SIZE = 10
@@ -41,7 +44,22 @@ class Worker:
 
         try:
             summary = self.distill_event(event_dict)
-        except Exception:
+        except Exception as exc:
+            attempt = event_dict["distill_attempts"] + 1
+            logger.warning(
+                "Distillation failed for event %s (attempt %d/%d): %s",
+                event_dict["id"],
+                attempt,
+                MAX_DISTILL_ATTEMPTS,
+                exc,
+            )
+            if attempt >= MAX_DISTILL_ATTEMPTS:
+                logger.warning(
+                    "Event %s permanently skipped after %d failed attempts. "
+                    "Check provider config: run `forgememo config -i`.",
+                    event_dict["id"],
+                    MAX_DISTILL_ATTEMPTS,
+                )
             conn.execute(
                 "UPDATE events SET distill_attempts = distill_attempts + 1 WHERE id=?",
                 (event_dict["id"],),

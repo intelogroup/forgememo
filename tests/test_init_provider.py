@@ -78,16 +78,29 @@ class TestConfigureProviderNoninteractive:
 
 
 class TestPromptProviderSetupGuards:
-    def test_non_tty_prints_panel_and_returns(self, monkeypatch, capsys):
+    def test_non_tty_auto_sets_forgememo(self, monkeypatch, capsys):
+        """Non-TTY: auto-select forgememo when claude CLI is not detected."""
         monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+        import shutil
+        monkeypatch.setattr(shutil, "which", lambda _: None)
         _prompt_provider_setup(yes=False)
-        # Provider must NOT be set (returned early)
-        assert fm_config.load().get("provider") is None
+        assert fm_config.load().get("provider") == "forgememo"
 
-    def test_yes_flag_prints_panel_and_returns(self, monkeypatch, capsys):
+    def test_yes_flag_auto_sets_claude_code_when_detected(self, monkeypatch, capsys):
+        """--yes: auto-select claude_code when claude CLI is detected."""
         monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+        import shutil
+        monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/claude" if name == "claude" else None)
         _prompt_provider_setup(yes=True)
-        assert fm_config.load().get("provider") is None
+        assert fm_config.load().get("provider") == "claude_code"
+
+    def test_yes_flag_auto_sets_forgememo_when_no_claude(self, monkeypatch, capsys):
+        """--yes: auto-select forgememo when claude CLI is not detected."""
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+        import shutil
+        monkeypatch.setattr(shutil, "which", lambda _: None)
+        _prompt_provider_setup(yes=True)
+        assert fm_config.load().get("provider") == "forgememo"
 
     def test_already_configured_skips_prompt(self, monkeypatch):
         fm_config.save({"provider": "anthropic"})

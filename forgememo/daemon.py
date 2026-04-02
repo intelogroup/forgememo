@@ -1095,9 +1095,14 @@ def main():
             logger.info("Health check: curl http://127.0.0.1:%s/health", port)
             try:
                 http_server.serve_forever()
+                logger.info("serve_forever() returned — daemon shutting down.")
+            except Exception as _exc:
+                logger.exception("Unhandled exception in serve_forever(): %s", _exc)
+                raise
             finally:
                 delete_port()
                 _delete_pid()
+                logger.info("Daemon stopped (Windows). Port and PID files removed.")
         else:
             # POSIX: UNIX socket primary, HTTP optional
             socket_host = f"unix://{SOCKET_PATH}"
