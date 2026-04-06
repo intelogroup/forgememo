@@ -14,17 +14,17 @@ CREDIT_PACKS: dict[str, dict] = {
     "starter": {
         "price_id": os.environ.get("STRIPE_PRICE_STARTER", "price_starter"),
         "credit_usd": 5.0,
-        "label": "$5 — 5 credits",
+        "label": "$5 — 1,000 distills",
     },
     "pro": {
         "price_id": os.environ.get("STRIPE_PRICE_PRO", "price_pro"),
         "credit_usd": 20.0,
-        "label": "$20 — 20 credits",
+        "label": "$20 — 4,000 distills",
     },
     "team": {
         "price_id": os.environ.get("STRIPE_PRICE_TEAM", "price_team"),
         "credit_usd": 50.0,
-        "label": "$50 — 50 credits",
+        "label": "$50 — 10,000 distills",
     },
 }
 
