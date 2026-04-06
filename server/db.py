@@ -1,9 +1,10 @@
 """
-Server data layer — supports SQLite (local dev) and OCI MySQL (production).
+Server data layer — supports SQLite (local dev), MySQL, and Postgres/Supabase (production).
 
 Backend selection:
-  - DATABASE_URL starts with "mysql" -> MySQL via pymysql
-  - DATABASE_URL unset               -> SQLite at ~/.forgemem/server.db
+  - DATABASE_URL starts with "postgresql"/"postgres" -> Postgres via psycopg2
+  - DATABASE_URL starts with "mysql"                -> MySQL via pymysql
+  - DATABASE_URL unset                              -> SQLite at ~/.forgemem/server.db
 """
 from __future__ import annotations
 
@@ -171,14 +172,97 @@ _SCHEMA_MYSQL = [
     "CREATE INDEX IF NOT EXISTS idx_sync_traces_user ON sync_traces (user_id)",
 ]
 
+_SCHEMA_POSTGRES = [
+    """CREATE TABLE IF NOT EXISTS users (
+        id          TEXT PRIMARY KEY,
+        email       TEXT UNIQUE NOT NULL,
+        balance_usd DOUBLE PRECISION NOT NULL DEFAULT 5.0,
+        created_at  BIGINT NOT NULL,
+        provider    TEXT NOT NULL DEFAULT 'forgemem',
+        provider_id TEXT,
+        name        TEXT,
+        avatar_url  TEXT,
+        username    TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS magic_link_tokens (
+        token       TEXT PRIMARY KEY,
+        email       TEXT NOT NULL,
+        callback    TEXT NOT NULL,
+        state       TEXT NOT NULL,
+        created_at  BIGINT NOT NULL,
+        expires_at  BIGINT NOT NULL,
+        used        BOOLEAN NOT NULL DEFAULT FALSE
+    )""",
+    """CREATE TABLE IF NOT EXISTS usage_runs (
+        run_id      TEXT PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        cost_usd    DOUBLE PRECISION NOT NULL,
+        model       TEXT NOT NULL,
+        balance_usd DOUBLE PRECISION NOT NULL,
+        ts          BIGINT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS stripe_events (
+        event_id     TEXT PRIMARY KEY,
+        processed_at BIGINT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS devices (
+        id          TEXT PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        name        TEXT NOT NULL DEFAULT '',
+        last_sync   BIGINT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS sync_traces (
+        id          BIGSERIAL PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        device_id   TEXT,
+        local_id    TEXT NOT NULL,
+        ts          BIGINT,
+        session_id  TEXT,
+        project_tag TEXT,
+        type        TEXT NOT NULL DEFAULT 'note',
+        content     TEXT NOT NULL,
+        distilled   BOOLEAN NOT NULL DEFAULT FALSE,
+        synced_at   BIGINT NOT NULL,
+        UNIQUE(user_id, device_id, local_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS sync_principles (
+        id              BIGSERIAL PRIMARY KEY,
+        user_id         TEXT NOT NULL,
+        device_id       TEXT,
+        local_id        TEXT NOT NULL,
+        source_local_id TEXT,
+        project_tag     TEXT,
+        type            TEXT,
+        principle       TEXT NOT NULL,
+        impact_score    INTEGER NOT NULL DEFAULT 5,
+        tags            TEXT,
+        synced_at       BIGINT NOT NULL,
+        UNIQUE(user_id, device_id, local_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS sessions (
+        token       TEXT PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        created_at  BIGINT NOT NULL,
+        expires_at  BIGINT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_usage_runs_user_ts ON usage_runs (user_id, ts)",
+    "CREATE INDEX IF NOT EXISTS idx_sync_traces_user ON sync_traces (user_id)",
+]
+
 
 class Database:
     def __init__(self, path: Path = DB_PATH, url: str = DATABASE_URL):
         self.path = path
         self.url = url
         self._mysql = url.startswith("mysql")
+        self._pg = url.startswith("postgresql") or url.startswith("postgres")
 
     def _conn(self):
+        if self._pg:
+            import psycopg2
+            import psycopg2.extras
+            conn = psycopg2.connect(self.url)
+            return conn
         if self._mysql:
             import pymysql
             import pymysql.cursors
@@ -200,6 +284,11 @@ class Database:
         return conn
 
     def _exec(self, conn, sql: str, params: tuple = ()):
+        if self._pg:
+            import psycopg2.extras
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(sql, params or None)
+            return cur
         if self._mysql:
             cur = conn.cursor()
             cur.execute(sql, params)
@@ -216,11 +305,16 @@ class Database:
         return [dict(r) for r in (cur.fetchall() or [])]
 
     def _q(self, sql: str) -> str:
-        return sql.replace("?", "%s") if self._mysql else sql
+        return sql.replace("?", "%s") if (self._mysql or self._pg) else sql
 
     def init(self) -> None:
-        schema = _SCHEMA_MYSQL if self._mysql else _SCHEMA_SQLITE
-        if not self._mysql:
+        if self._pg:
+            schema = _SCHEMA_POSTGRES
+        elif self._mysql:
+            schema = _SCHEMA_MYSQL
+        else:
+            schema = _SCHEMA_SQLITE
+        if not self._mysql and not self._pg:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as conn:
             for stmt in schema:
@@ -418,7 +512,6 @@ class Database:
                 return None
             return self._fetchone(conn, self._q("SELECT * FROM users WHERE id=?"), (row["user_id"],))
 
-
     # ---- Stripe ----
 
     def stripe_event_seen(self, event_id: str) -> bool:
@@ -442,7 +535,12 @@ class Database:
 
     def upsert_device(self, user_id: str, device_id: str, name: str) -> None:
         now = int(time.time())
-        if self._mysql:
+        if self._pg:
+            sql = (
+                "INSERT INTO devices (id, user_id, name, last_sync) VALUES (%s,%s,%s,%s) "
+                "ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, last_sync=EXCLUDED.last_sync"
+            )
+        elif self._mysql:
             sql = (
                 "INSERT INTO devices (id, user_id, name, last_sync) VALUES (%s,%s,%s,%s) "
                 "ON DUPLICATE KEY UPDATE name=VALUES(name), last_sync=VALUES(last_sync)"
@@ -455,7 +553,16 @@ class Database:
 
     def upsert_trace(self, user_id: str, device_id: str, t: dict) -> None:
         now = int(time.time())
-        if self._mysql:
+        if self._pg:
+            sql = (
+                "INSERT INTO sync_traces "
+                "(user_id,device_id,local_id,ts,session_id,project_tag,type,content,distilled,synced_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                "ON CONFLICT (user_id, device_id, local_id) DO UPDATE SET "
+                "ts=EXCLUDED.ts,content=EXCLUDED.content,"
+                "distilled=EXCLUDED.distilled,synced_at=EXCLUDED.synced_at"
+            )
+        elif self._mysql:
             sql = (
                 "INSERT INTO sync_traces "
                 "(user_id,device_id,local_id,ts,session_id,project_tag,type,content,distilled,synced_at) "
@@ -480,7 +587,16 @@ class Database:
 
     def upsert_principle(self, user_id: str, device_id: str, p: dict) -> None:
         now = int(time.time())
-        if self._mysql:
+        if self._pg:
+            sql = (
+                "INSERT INTO sync_principles "
+                "(user_id,device_id,local_id,source_local_id,project_tag,type,principle,impact_score,tags,synced_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                "ON CONFLICT (user_id, device_id, local_id) DO UPDATE SET "
+                "principle=EXCLUDED.principle,impact_score=EXCLUDED.impact_score,"
+                "tags=EXCLUDED.tags,synced_at=EXCLUDED.synced_at"
+            )
+        elif self._mysql:
             sql = (
                 "INSERT INTO sync_principles "
                 "(user_id,device_id,local_id,source_local_id,project_tag,type,principle,impact_score,tags,synced_at) "
