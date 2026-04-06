@@ -230,9 +230,24 @@ async def checkout(body: CheckoutRequest, authorization: Annotated[str, Header()
 @app.get("/debug/webhook-secret-check")
 async def debug_webhook_secret():
     """Temporary: confirm which secret is loaded. Returns first/last 4 chars only."""
-    import os
+    import os, stripe as _stripe
     s = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
-    return {"prefix": s[:10], "suffix": s[-4:], "length": len(s)}
+    return {"prefix": s[:10], "suffix": s[-4:], "length": len(s),
+            "stripe_ver": _stripe._version.VERSION}
+
+
+@app.post("/debug/webhook-echo")
+async def debug_webhook_echo(request: Request):
+    """Temporary: echo back payload hash + header to debug signature issues."""
+    import hashlib
+    body = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    return {
+        "body_len": len(body),
+        "body_sha256": hashlib.sha256(body).hexdigest()[:16],
+        "sig_header": sig[:80],
+        "content_type": request.headers.get("content-type", ""),
+    }
 
 
 @app.post("/webhooks/stripe")
