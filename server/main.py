@@ -227,70 +227,17 @@ async def checkout(body: CheckoutRequest, authorization: Annotated[str, Header()
     return {"checkout_url": url, "packs": CREDIT_PACKS}
 
 
-import os as _os
-_INSTANCE_ID = _os.environ.get("RENDER_INSTANCE_ID", "local")
-
-
-@app.get("/debug/webhook-secret-check")
-async def debug_webhook_secret():
-    """Temporary: confirm which secret is loaded. Returns first/last 4 chars only."""
-    import stripe as _stripe
-    s = _os.environ.get("STRIPE_WEBHOOK_SECRET", "")
-    return {"prefix": s[:10], "suffix": s[-4:], "length": len(s),
-            "stripe_ver": _stripe._version.VERSION, "instance": _INSTANCE_ID}
-
-
-@app.post("/debug/webhook-echo")
-async def debug_webhook_echo(request: Request):
-    """Temporary: echo back payload hash + try verify to debug signature issues."""
-    import hashlib
-    import stripe as _stripe
-    from billing import _webhook_secret
-    body = await request.body()
-    sig = request.headers.get("stripe-signature", "")
-    secret = _webhook_secret()
-    verify_result = "not_attempted"
-    verify_error = None
-    try:
-        _stripe.Webhook.construct_event(body, sig, secret)
-        verify_result = "ok"
-    except Exception as e:
-        verify_result = "fail"
-        verify_error = f"{type(e).__name__}: {e}"
-    return {
-        "body_len": len(body),
-        "body_sha256": hashlib.sha256(body).hexdigest()[:16],
-        "sig_header": sig[:80],
-        "secret_prefix": secret[:10],
-        "secret_len": len(secret),
-        "verify": verify_result,
-        "verify_error": verify_error,
-        "instance": _INSTANCE_ID,
-    }
-
 
 @app.post("/webhooks/stripe")
 async def stripe_webhook(request: Request):
     payload = await request.body()
     sig = request.headers.get("stripe-signature", "")
-    # Inline verify to isolate from billing module import issues
-    import stripe as _stripe_wh, traceback as _tb
-    from billing import _webhook_secret as _get_secret
-    _secret = _get_secret()
-    try:
-        _stripe_wh.Webhook.construct_event(payload, sig, _secret)
-    except Exception as _inline_exc:
-        import logging
-        _full_tb = _tb.format_exc()
-        logging.warning("stripe INLINE [inst=%s type_payload=%s type_secret=%s len_secret=%d tb=%s]",
-            _INSTANCE_ID, type(payload).__name__, type(_secret).__name__, len(_secret) if _secret else 0, _full_tb[-400:])
-        raise HTTPException(status_code=400, detail=f"INLINE [{type(_inline_exc).__name__}] {_full_tb[-300:]}")
     try:
         result = parse_webhook_event(payload, sig)
     except Exception as exc:
         import logging
-        logging.warning("stripe webhook signature failure [inst=%s]: %s", _INSTANCE_ID, exc)
-        raise HTTPException(status_code=400, detail=f"Invalid webhook signature [{_INSTANCE_ID}]: {exc}")
+        logging.warning("stripe webhook failure: %s", exc)
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
     if result is None:
         return {"status": "ignored"}

@@ -67,12 +67,13 @@ def parse_webhook_event(payload: bytes, sig: str) -> dict | None:
         return None
 
     session_obj = event["data"]["object"]
-    if session_obj.get("payment_status") != "paid":
+    # stripe v8+: StripeObject no longer inherits from dict; use [] or getattr
+    if session_obj["payment_status"] != "paid":
         return None
 
-    meta = session_obj.get("metadata", {})
-    user_id = meta.get("user_id")
-    credit_usd = meta.get("credit_usd")
+    meta = session_obj["metadata"]
+    user_id = meta["user_id"] if "user_id" in meta else None
+    credit_usd = meta["credit_usd"] if "credit_usd" in meta else None
 
     if not user_id or not credit_usd:
         return None
