@@ -227,13 +227,17 @@ async def checkout(body: CheckoutRequest, authorization: Annotated[str, Header()
     return {"checkout_url": url, "packs": CREDIT_PACKS}
 
 
+import os as _os
+_INSTANCE_ID = _os.environ.get("RENDER_INSTANCE_ID", "local")
+
+
 @app.get("/debug/webhook-secret-check")
 async def debug_webhook_secret():
     """Temporary: confirm which secret is loaded. Returns first/last 4 chars only."""
-    import os, stripe as _stripe
-    s = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+    import stripe as _stripe
+    s = _os.environ.get("STRIPE_WEBHOOK_SECRET", "")
     return {"prefix": s[:10], "suffix": s[-4:], "length": len(s),
-            "stripe_ver": _stripe._version.VERSION}
+            "stripe_ver": _stripe._version.VERSION, "instance": _INSTANCE_ID}
 
 
 @app.post("/debug/webhook-echo")
@@ -261,6 +265,7 @@ async def debug_webhook_echo(request: Request):
         "secret_len": len(secret),
         "verify": verify_result,
         "verify_error": verify_error,
+        "instance": _INSTANCE_ID,
     }
 
 
@@ -272,8 +277,8 @@ async def stripe_webhook(request: Request):
         result = parse_webhook_event(payload, sig)
     except Exception as exc:
         import logging
-        logging.warning("stripe webhook signature failure: %s", exc)
-        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+        logging.warning("stripe webhook signature failure [inst=%s]: %s", _INSTANCE_ID, exc)
+        raise HTTPException(status_code=400, detail=f"Invalid webhook signature [{_INSTANCE_ID}]: {exc}")
 
     if result is None:
         return {"status": "ignored"}
