@@ -79,9 +79,25 @@ def _do_auth_login() -> bool:
     login_url = (
         f"{_api_base}/cli-auth?callback=http://127.0.0.1:{port}/callback&state={state}"
     )
-    console.print(f"Opening browser to authenticate...\n{login_url}")
-    webbrowser.open(login_url)
-    console.print("[dim]Waiting for browser callback (Ctrl+C to cancel)...[/]")
+    console.print(f"Opening browser to authenticate...\n[bold]{login_url}[/]")
+    browser_opened = webbrowser.open(login_url)
+
+    if not browser_opened:
+        console.print(
+            "\n[yellow]No browser detected (headless/remote machine).[/]\n"
+            "\n"
+            "  1. Open the URL above in a browser on any machine\n"
+            "  2. Enter your email and click the magic link in your inbox\n"
+            "  3. The magic link redirects back to [bold]this machine[/] — if you\n"
+            "     opened the browser remotely, run this on THIS terminal instead:\n"
+            "\n"
+            f"     [bold]curl -L '<paste-your-magic-link-here>'[/]\n"
+            "\n"
+            "     The magic link URL looks like:\n"
+            f"     [dim]{_api_base}/cli-auth/verify?token=...&callback=http://127.0.0.1:{port}/callback&state={state}[/]\n"
+        )
+    else:
+        console.print("[dim]Waiting for browser callback (Ctrl+C to cancel)...[/]")
 
     t.join(timeout=120)
 
