@@ -274,15 +274,17 @@ async def stripe_webhook(request: Request):
     payload = await request.body()
     sig = request.headers.get("stripe-signature", "")
     # Inline verify to isolate from billing module import issues
-    import stripe as _stripe_wh
+    import stripe as _stripe_wh, traceback as _tb
     from billing import _webhook_secret as _get_secret
     _secret = _get_secret()
     try:
         _stripe_wh.Webhook.construct_event(payload, sig, _secret)
     except Exception as _inline_exc:
         import logging
-        logging.warning("stripe INLINE failure [inst=%s secret_len=%d]: %s", _INSTANCE_ID, len(_secret), _inline_exc)
-        raise HTTPException(status_code=400, detail=f"INLINE fail [{_INSTANCE_ID}] secret_len={len(_secret)}: {_inline_exc}")
+        _full_tb = _tb.format_exc()
+        logging.warning("stripe INLINE [inst=%s type_payload=%s type_secret=%s len_secret=%d tb=%s]",
+            _INSTANCE_ID, type(payload).__name__, type(_secret).__name__, len(_secret) if _secret else 0, _full_tb[-400:])
+        raise HTTPException(status_code=400, detail=f"INLINE [{type(_inline_exc).__name__}] {_full_tb[-300:]}")
     try:
         result = parse_webhook_event(payload, sig)
     except Exception as exc:
