@@ -23,7 +23,6 @@ import urllib.parse as _urlparse
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
-import anthropic
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -57,7 +56,8 @@ async def unhandled_exception_handler(request, exc):
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
-ANTHROPIC_API_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
+GROQ_API_KEY         = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL           = os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
 PLATFORM_FEE_USD     = float(os.environ.get("PLATFORM_FEE_USD", "0.02"))
 FREE_CREDIT_USD      = float(os.environ.get("FREE_CREDIT_USD", "5.0"))
 API_BASE_URL         = os.environ.get("API_BASE_URL", "https://api.forgememo.com")
@@ -82,7 +82,7 @@ _CLI_CALLBACK_RE = re.compile(r"^http://127\.0\.0\.1:\d{4,5}/\S*$")
 class InferenceRequest(BaseModel):
     prompt: str
     max_tokens: int = 300
-    model: str = "claude-haiku-4-5-20251001"
+    model: str = "llama-3.1-8b-instant"
 
 
 class InferenceResponse(BaseModel):
@@ -134,9 +134,10 @@ def _auth_user(authorization: str) -> dict:
 
 
 def _estimate_cost(prompt: str, max_tokens: int, model: str) -> float:
+    # Groq llama-3.1-8b-instant: $0.05 input / $0.08 output per 1M tokens
     input_tokens = len(prompt) / 4
-    input_cost  = (input_tokens / 1_000_000) * 0.25
-    output_cost = (max_tokens  / 1_000_000) * 1.25
+    input_cost  = (input_tokens / 1_000_000) * 0.05
+    output_cost = (max_tokens  / 1_000_000) * 0.08
     return round(input_cost + output_cost + PLATFORM_FEE_USD, 6)
 
 
@@ -178,13 +179,19 @@ async def inference(body: InferenceRequest, authorization: Annotated[str, Header
             detail={"message": "Insufficient credits", "balance_usd": billing_user["balance_usd"]},
         )
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    response = client.messages.create(
-        model=body.model,
-        max_tokens=body.max_tokens,
-        messages=[{"role": "user", "content": body.prompt}],
+    resp = httpx.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+        json={
+            "model": GROQ_MODEL,
+            "messages": [{"role": "user", "content": body.prompt}],
+            "max_tokens": body.max_tokens,
+        },
+        timeout=30,
     )
-    text = response.content[0].text.strip()
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Groq error: {resp.text[:200]}")
+    text = resp.json()["choices"][0]["message"]["content"].strip()
 
     try:
         new_balance = db.deduct_credits(billing_user["id"], estimated_cost)
@@ -192,7 +199,7 @@ async def inference(body: InferenceRequest, authorization: Annotated[str, Header
         raise HTTPException(status_code=402, detail="Insufficient credits")
 
     run_id = secrets.token_hex(8)
-    db.log_run(billing_user["id"], run_id, estimated_cost, body.model, new_balance)
+    db.log_run(billing_user["id"], run_id, estimated_cost, GROQ_MODEL, new_balance)
 
     return InferenceResponse(
         text=text, cost_usd=estimated_cost, balance_usd=new_balance, run_id=run_id,
